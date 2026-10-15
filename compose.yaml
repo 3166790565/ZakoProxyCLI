@@ -6,7 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    pull_policy: build
+    pull_policy: missing
     init: true
     restart: unless-stopped
     ports:

@@ -11,7 +11,7 @@
 ```sh
 git clone https://github.com/mizaawa/zakoai-proxy-cli.git
 cd zakoai-proxy-cli
-docker compose pull --ignore-buildable
+docker compose pull
 docker compose build --pull
 docker compose up -d --no-build
 docker compose ps
@@ -19,7 +19,7 @@ docker compose ps
 
 访问 **http://localhost:1990**。全新数据卷首次进入会创建管理员账号，密码至少 12 个字符；之后使用同一账密登录。项目没有默认管理员账号或密码，请先完成初始化再对外开放服务。
 
-`pull --ignore-buildable` 跳过本地可构建服务；`build --pull` 更新 Node、Rust、Debian 基础镜像并编译项目；`up -d` 启动服务。镜像名称为 `ghcr.io/mizaawa/zakoai-proxy-cli:latest`，默认分支 CI 成功后会发布该镜像及对应提交 SHA 标签。
+`pull` 下载已发布镜像；`build --pull` 更新 Node、Rust、Debian 基础镜像并从当前源码重新编译项目；`up -d` 启动服务。镜像名称为 `ghcr.io/mizaawa/zakoai-proxy-cli:latest`，默认分支 CI 成功后会发布该镜像及对应提交 SHA 标签。
 
 Compose 默认仅将宿主机 **127.0.0.1:1990** 映射到容器。需要对外开放端口时设置 `ZAKO_BIND_IP=0.0.0.0`，`ZAKO_PORT` 可修改宿主机端口。可在不提交 Git 的 `.env` 中配置：
 

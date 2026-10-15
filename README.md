@@ -11,7 +11,7 @@ Requires Docker Engine/Desktop with Docker Compose v2. Build from the repository
 ```sh
 git clone https://github.com/mizaawa/zakoai-proxy-cli.git
 cd zakoai-proxy-cli
-docker compose pull --ignore-buildable
+docker compose pull
 docker compose build --pull
 docker compose up -d --no-build
 docker compose ps
@@ -19,7 +19,7 @@ docker compose ps
 
 Open **http://localhost:1990**. On a fresh data volume, create your administrator username and a password of at least 12 characters. There are no built-in administrator credentials. Subsequent visits use the same account. Initialize the account before making the service reachable by other people.
 
-The pull command deliberately skips the locally buildable service; `build --pull` refreshes its Node/Rust/Debian base images and builds the actual application. `up -d` starts it. The Compose image name is `ghcr.io/mizaawa/zakoai-proxy-cli:latest`; successful default-branch CI runs also publish this image and a commit-SHA tag.
+The pull command downloads the published image; `build --pull` refreshes its Node/Rust/Debian base images and rebuilds the application from this checkout. `up -d` starts it. The Compose image name is `ghcr.io/mizaawa/zakoai-proxy-cli:latest`; successful default-branch CI runs also publish this image and a commit-SHA tag.
 
 Compose binds port **1990 to loopback by default**. Set `ZAKO_BIND_IP=0.0.0.0` only when you intend to expose the port. `ZAKO_PORT` changes the host port. Put these values in an uncommitted `.env`, for example:
 
