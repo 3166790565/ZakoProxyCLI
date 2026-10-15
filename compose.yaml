@@ -1,0 +1,33 @@
+name: zakoai-proxy
+
+services:
+  proxy:
+    image: ghcr.io/mizaawa/zakoai-proxy-cli:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: build
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${ZAKO_BIND_IP:-127.0.0.1}:${ZAKO_PORT:-1990}:1990"
+    environment:
+      DATA_DIR: /data
+      WEB_DIR: /app/web/dist
+      BIND_ADDR: 0.0.0.0:1990
+      TRUST_PROXY: "${TRUST_PROXY:-0}"
+      RUST_LOG: "${RUST_LOG:-zakoai_proxy=info}"
+    volumes:
+      - zako-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    stop_grace_period: 30s
+
+volumes:
+  zako-data:

@@ -1,0 +1,202 @@
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export async function api<T = unknown>(
+  path: string,
+  method = "GET",
+  body?: unknown,
+): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    method,
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Console-Path": window.location.pathname,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  let value: unknown;
+  try {
+    value = text ? JSON.parse(text) : {};
+  } catch {
+    value = {};
+  }
+  if (!response.ok) {
+    const failure = value as {
+      error?: { message?: string } | string;
+      message?: string;
+    };
+    const message =
+      typeof failure.error === "string"
+        ? failure.error
+        : failure.error?.message;
+    if (
+      response.status === 401 &&
+      !["/login", "/setup", "/bootstrap"].includes(path)
+    )
+      window.dispatchEvent(new Event("session-expired"));
+    throw new ApiError(
+      message || failure.message || `请求失败 (${response.status})`,
+      response.status,
+    );
+  }
+  return value as T;
+}
+
+export type Group = {
+  id: string;
+  name: string;
+  models: string[];
+  instruction: string;
+};
+export type Account = {
+  id: string;
+  name: string;
+  endpoint: string;
+  protocols: string[];
+  models: string[];
+  group_ids: string[];
+  priority: number;
+  rpm: number;
+  concurrency: number;
+  enabled: boolean;
+  has_api_key: boolean;
+  runtime: { active: number; failures: number; cooldown_until: number };
+};
+export type Usage = {
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+};
+export type RelayKey = {
+  id: string;
+  name: string;
+  group_id: string;
+  enabled: boolean;
+  prefix: string;
+  created_at: number;
+  usage: Usage;
+};
+export type Settings = {
+  security_path: string;
+  max_retries: number;
+  failure_threshold: number;
+  cooldown_seconds: number;
+  request_timeout_seconds: number;
+  retention_days: number;
+};
+export type Profile = {
+  id: string;
+  name: string;
+  models: string[];
+  instruction: string;
+};
+export type State = {
+  groups: Group[];
+  accounts: Account[];
+  keys: RelayKey[];
+  settings: Settings;
+  profiles: Profile[];
+  username: string;
+};
+export type Summary = Usage & {
+  uncached_tokens: number;
+  total_tokens: number;
+  total_requests: number;
+  success_rate: number;
+  cache_hit_rate: number;
+  avg_latency_ms: number;
+  rpm: number;
+  tpm: number;
+  cyber_count: number;
+};
+export type Daily = Usage & {
+  date: string;
+  total_requests: number;
+  success_count: number;
+  cyber_count: number;
+};
+export type Recent = {
+  id: string;
+  created_at: number;
+  model: string;
+  account_name?: string;
+  key_name?: string;
+  status: number;
+  latency_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  cyber_count?: number;
+};
+export type Stats = {
+  summary: Summary;
+  daily: Daily[];
+  recent: Recent[];
+  accounts: { total: number; healthy: number; cooling: number };
+  keys: number;
+};
+
+export const zeroSummary: Summary = {
+  input_tokens: 0,
+  output_tokens: 0,
+  cached_tokens: 0,
+  uncached_tokens: 0,
+  total_tokens: 0,
+  total_requests: 0,
+  success_rate: 0,
+  cache_hit_rate: 0,
+  avg_latency_ms: 0,
+  rpm: 0,
+  tpm: 0,
+  cyber_count: 0,
+};
+export const emptyStats: Stats = {
+  summary: zeroSummary,
+  daily: [],
+  recent: [],
+  accounts: { total: 0, healthy: 0, cooling: 0 },
+  keys: 0,
+};
+export const number = (value = 0) =>
+  new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+export const compact = (value = 0) =>
+  new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 2,
+  }).format(value);
+export const percent = (value = 0) => `${value.toFixed(1)}%`;
+export const time = (value: number) =>
+  new Date(value * 1000).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+export const day = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+export const errorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : "操作失败，请重试";
+
+export async function copy(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    const element = document.createElement("textarea");
+    element.value = value;
+    element.style.position = "fixed";
+    element.style.opacity = "0";
+    document.body.append(element);
+    element.select();
+    const successful = document.execCommand("copy");
+    element.remove();
+    if (!successful) throw new Error("复制失败，请手动选择并复制");
+  }
+}

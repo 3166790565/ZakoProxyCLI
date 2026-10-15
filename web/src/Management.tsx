@@ -1,0 +1,1301 @@
+import { useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import {
+  Check,
+  Copy,
+  Database,
+  ExternalLink,
+  FolderClosed,
+  KeyRound,
+  Link,
+  ListFilter,
+  Pencil,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
+import { api, compact, copy, errorMessage, time } from "./api";
+import type { Account, Group, RelayKey, State } from "./api";
+import {
+  Badge,
+  Button,
+  Confirm,
+  CopyButton,
+  Empty,
+  ErrorBox,
+  Field,
+  IconButton,
+  Modal,
+  ModalForm,
+  SearchInput,
+  Select,
+  Toggle,
+} from "./components";
+import type { Notice } from "./components";
+
+export type PageProps = {
+  state: State;
+  reload: () => Promise<void>;
+  notify: Notice;
+};
+
+function DeleteDialog({
+  resource,
+  item,
+  onClose,
+  reload,
+  notify,
+}: {
+  resource: "groups" | "accounts" | "keys";
+  item: { id: string; name: string };
+  onClose: () => void;
+  reload: () => Promise<void>;
+  notify: Notice;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const label = { groups: "分组", accounts: "账号", keys: "密钥" }[resource];
+  async function remove() {
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/${resource}/${item.id}`, "DELETE");
+      await reload();
+      onClose();
+      notify(`${label}已删除`);
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Confirm
+      title={`删除${label}`}
+      message={`确认删除“${item.name}”？此操作不可撤销。${resource === "keys" ? "使用此密钥的应用将立即失去访问权限。" : resource === "accounts" ? "此账号将停止参与请求调度。" : "已被引用的分组需要先解除关联。"}`}
+      busy={busy}
+      error={error}
+      onClose={onClose}
+      onConfirm={() => void remove()}
+    />
+  );
+}
+
+function PageHeading({
+  eyebrow,
+  title,
+  count,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="page-heading">
+      <div>
+        <div className="eyebrow">{eyebrow}</div>
+        <h1>
+          {title}
+          <span className="title-count">{count}</span>
+        </h1>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function TableFooter({
+  count,
+  total,
+  noun,
+}: {
+  count: number;
+  total: number;
+  noun: string;
+}) {
+  return (
+    <div className="table-footer">
+      <span>
+        {count === total
+          ? `共 ${total} 个${noun}`
+          : `筛选到 ${count} / ${total} 个${noun}`}
+      </span>
+      <span>所有更改即时生效</span>
+    </div>
+  );
+}
+
+export function GroupsPage({ state, reload, notify }: PageProps) {
+  const [search, setSearch] = useState("");
+  const [editing, setEditing] = useState<Group | "new" | null>(null);
+  const [deleting, setDeleting] = useState<Group | null>(null);
+  const filtered = state.groups.filter((group) =>
+    `${group.name} ${group.models.join(" ")}`
+      .toLowerCase()
+      .includes(search.toLowerCase()),
+  );
+  return (
+    <>
+      <PageHeading
+        eyebrow="ROUTING GROUPS"
+        title="分组管理"
+        count={state.groups.length}
+      >
+        <Button className="primary" onClick={() => setEditing("new")}>
+          <Plus size={17} />
+          创建分组
+        </Button>
+      </PageHeading>
+      <div className="list-summary">
+        <div>
+          <span className="summary-icon">
+            <FolderClosed size={19} />
+          </span>
+          <span>
+            分组<strong>{state.groups.length}</strong>
+          </span>
+        </div>
+        <div>
+          <span className="summary-icon">
+            <Database size={19} />
+          </span>
+          <span>
+            上游账号<strong>{state.accounts.length}</strong>
+          </span>
+        </div>
+        <div>
+          <span className="summary-icon">
+            <ShieldCheck size={19} />
+          </span>
+          <span>
+            指令模板<strong>{state.profiles.length}</strong>
+          </span>
+        </div>
+      </div>
+      <section className="data-section">
+        <div className="list-toolbar">
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="搜索分组或模型…"
+          />
+          <span className="toolbar-meta">
+            <ListFilter size={15} />
+            全部分组
+          </span>
+        </div>
+        {filtered.length ? (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>分组名称</th>
+                  <th>应用模型</th>
+                  <th>账号</th>
+                  <th>密钥</th>
+                  <th>指令配置</th>
+                  <th className="action-cell">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((group) => (
+                  <tr key={group.id}>
+                    <td>
+                      <div className="entity-cell">
+                        <span className="entity-icon">
+                          <FolderClosed size={18} />
+                        </span>
+                        <div>
+                          <strong>{group.name}</strong>
+                          <span className="cell-secondary mono">
+                            {group.id.slice(0, 8)}
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="model-badges">
+                        {group.models.slice(0, 2).map((model) => (
+                          <Badge key={model}>{model}</Badge>
+                        ))}
+                        {group.models.length > 2 && (
+                          <Badge>+{group.models.length - 2}</Badge>
+                        )}
+                        {!group.models.length && (
+                          <span className="muted">未选择模型</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="mono">
+                      {
+                        state.accounts.filter((account) =>
+                          account.group_ids.includes(group.id),
+                        ).length
+                      }
+                    </td>
+                    <td className="mono">
+                      {
+                        state.keys.filter((key) => key.group_id === group.id)
+                          .length
+                      }
+                    </td>
+                    <td>
+                      <Badge
+                        variant={group.instruction ? "green" : "neutral"}
+                        dot
+                      >
+                        {group.instruction ? "已配置" : "未配置"}
+                      </Badge>
+                    </td>
+                    <td>
+                      <div className="row-actions">
+                        <IconButton
+                          title="编辑分组"
+                          onClick={() => setEditing(group)}
+                        >
+                          <Pencil size={16} />
+                        </IconButton>
+                        <IconButton
+                          title="删除分组"
+                          className="destructive"
+                          onClick={() => setDeleting(group)}
+                        >
+                          <Trash2 size={16} />
+                        </IconButton>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <Empty
+            title={search ? "没有匹配的分组" : "还没有分组"}
+            detail={search ? "尝试其他分组名称或模型 ID" : "创建第一个分组"}
+            action={
+              !search && (
+                <Button onClick={() => setEditing("new")}>
+                  <Plus size={16} />
+                  创建分组
+                </Button>
+              )
+            }
+          />
+        )}
+        <TableFooter
+          count={filtered.length}
+          total={state.groups.length}
+          noun="分组"
+        />
+      </section>
+      {editing && (
+        <GroupForm
+          group={editing === "new" ? undefined : editing}
+          state={state}
+          reload={reload}
+          notify={notify}
+          onClose={() => setEditing(null)}
+        />
+      )}
+      {deleting && (
+        <DeleteDialog
+          resource="groups"
+          item={deleting}
+          onClose={() => setDeleting(null)}
+          reload={reload}
+          notify={notify}
+        />
+      )}
+    </>
+  );
+}
+
+function GroupForm({
+  group,
+  state,
+  reload,
+  notify,
+  onClose,
+}: PageProps & { group?: Group; onClose: () => void }) {
+  const [name, setName] = useState(group?.name || "");
+  const [models, setModels] = useState<string[]>(group?.models || []);
+  const [instruction, setInstruction] = useState(group?.instruction || "");
+  const [profile, setProfile] = useState("");
+  const [manualModel, setManualModel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const choices = [
+    ...new Set([...state.profiles.flatMap((item) => item.models), ...models]),
+  ];
+  function selectProfile(id: string) {
+    setProfile(id);
+    const selected = state.profiles.find((item) => item.id === id);
+    if (selected) {
+      setInstruction(selected.instruction);
+      setModels([...selected.models]);
+    }
+  }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api(
+        group ? `/groups/${group.id}` : "/groups",
+        group ? "PUT" : "POST",
+        { name: name.trim(), models, instruction },
+      );
+      await reload();
+      onClose();
+      notify(group ? "分组已更新" : "分组已创建");
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal
+      title={group ? "编辑分组" : "创建分组"}
+      subtitle="路由与模型指令"
+      onClose={onClose}
+      busy={busy}
+      wide
+    >
+      <ModalForm
+        onSubmit={submit}
+        onClose={onClose}
+        busy={busy}
+        error={error}
+        submit={group ? "保存更改" : "创建分组"}
+      >
+        <Field label="分组名称">
+          <input
+            autoFocus
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="例如：默认分组"
+            required
+            maxLength={100}
+          />
+        </Field>
+        <Field label="指令模板" optional>
+          <Select
+            value={profile}
+            onChange={(event) => selectProfile(event.target.value)}
+          >
+            <option value="">自定义配置</option>
+            {state.profiles.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <div className="field">
+          <span className="field-label">
+            应用模型<span>{models.length} 个已选</span>
+          </span>
+          <div className="checkbox-list">
+            {choices.length ? (
+              choices.map((model) => (
+                <label className="check-option" key={model}>
+                  <input
+                    type="checkbox"
+                    checked={models.includes(model)}
+                    onChange={(event) =>
+                      setModels(
+                        event.target.checked
+                          ? [...models, model]
+                          : models.filter((item) => item !== model),
+                      )
+                    }
+                  />
+                  <span className="mono">{model}</span>
+                </label>
+              ))
+            ) : (
+              <p className="field-hint">暂无模型，请添加模型 ID</p>
+            )}
+          </div>
+          <div className="inline-input">
+            <input
+              aria-label="添加模型 ID"
+              value={manualModel}
+              onChange={(event) => setManualModel(event.target.value)}
+              placeholder="自定义模型 ID"
+            />
+            <IconButton
+              title="添加模型"
+              disabled={!manualModel.trim()}
+              onClick={() => {
+                setModels([...new Set([...models, manualModel.trim()])]);
+                setManualModel("");
+              }}
+            >
+              <Plus size={18} />
+            </IconButton>
+          </div>
+        </div>
+        <Field label="模型指令" optional>
+          <textarea
+            rows={6}
+            value={instruction}
+            onChange={(event) => setInstruction(event.target.value)}
+            placeholder="输入此分组的模型指令"
+          />
+        </Field>
+      </ModalForm>
+    </Modal>
+  );
+}
+
+export function AccountsPage({ state, reload, notify }: PageProps) {
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [editing, setEditing] = useState<Account | "new" | null>(null);
+  const [deleting, setDeleting] = useState<Account | null>(null);
+  const filtered = state.accounts.filter(
+    (account) =>
+      `${account.name} ${account.endpoint}`
+        .toLowerCase()
+        .includes(search.toLowerCase()) &&
+      (filter === "all" ||
+        (filter === "enabled" ? account.enabled : !account.enabled)),
+  );
+  const cooling = state.accounts.filter(
+    (account) => (account.runtime?.cooldown_until || 0) > Date.now() / 1000,
+  ).length;
+  return (
+    <>
+      <PageHeading
+        eyebrow="UPSTREAM ACCOUNTS"
+        title="账号管理"
+        count={state.accounts.length}
+      >
+        <Button className="primary" onClick={() => setEditing("new")}>
+          <Plus size={17} />
+          添加账号
+        </Button>
+      </PageHeading>
+      <div className="list-summary">
+        <div>
+          <span className="summary-icon">
+            <Database size={19} />
+          </span>
+          <span>
+            全部账号<strong>{state.accounts.length}</strong>
+          </span>
+        </div>
+        <div>
+          <span className="summary-icon">
+            <Check size={19} />
+          </span>
+          <span>
+            已启用
+            <strong>
+              {state.accounts.filter((account) => account.enabled).length}
+            </strong>
+          </span>
+        </div>
+        <div>
+          <span className="summary-icon">
+            <RefreshCw size={18} />
+          </span>
+          <span>
+            冷却中<strong>{cooling}</strong>
+          </span>
+        </div>
+      </div>
+      <section className="data-section">
+        <div className="list-toolbar">
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="搜索账号或端点…"
+          />
+          <Select
+            aria-label="账号状态筛选"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          >
+            <option value="all">全部状态</option>
+            <option value="enabled">已启用</option>
+            <option value="disabled">已停用</option>
+          </Select>
+        </div>
+        {filtered.length ? (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>账号</th>
+                  <th>端点 / 协议</th>
+                  <th>分组</th>
+                  <th>优先级</th>
+                  <th>RPM / 并发</th>
+                  <th>状态</th>
+                  <th className="action-cell">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((account) => (
+                  <tr key={account.id}>
+                    <td>
+                      <div className="entity-cell">
+                        <span className="entity-icon">
+                          <Database size={18} />
+                        </span>
+                        <div>
+                          <strong>{account.name}</strong>
+                          <span className="cell-secondary">
+                            {account.models.length} 个模型
+                          </span>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <span
+                        className="endpoint-text mono"
+                        title={account.endpoint}
+                      >
+                        {account.endpoint}
+                      </span>
+                      <span className="cell-secondary protocol-text">
+                        {account.protocols.join(" + ")}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="model-badges">
+                        {account.group_ids.map((id) => (
+                          <Badge key={id}>
+                            {state.groups.find((group) => group.id === id)
+                              ?.name || "未知分组"}
+                          </Badge>
+                        ))}
+                        {!account.group_ids.length && (
+                          <span className="muted">未分组</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="mono">P{account.priority}</td>
+                    <td className="mono">
+                      {account.rpm || "不限"}
+                      <span className="muted"> / </span>
+                      {account.concurrency || "不限"}
+                    </td>
+                    <td>
+                      <Badge
+                        variant={
+                          !account.enabled
+                            ? "neutral"
+                            : (account.runtime?.cooldown_until || 0) >
+                                Date.now() / 1000
+                              ? "amber"
+                              : "green"
+                        }
+                        dot
+                      >
+                        {!account.enabled
+                          ? "已停用"
+                          : (account.runtime?.cooldown_until || 0) >
+                              Date.now() / 1000
+                            ? "冷却中"
+                            : "可用"}
+                      </Badge>
+                    </td>
+                    <td>
+                      <div className="row-actions">
+                        <IconButton
+                          title="编辑账号"
+                          onClick={() => setEditing(account)}
+                        >
+                          <Pencil size={16} />
+                        </IconButton>
+                        <IconButton
+                          title="删除账号"
+                          className="destructive"
+                          onClick={() => setDeleting(account)}
+                        >
+                          <Trash2 size={16} />
+                        </IconButton>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <Empty
+            title={
+              search || filter !== "all" ? "没有匹配的账号" : "还没有上游账号"
+            }
+            detail={search ? "尝试其他账号名称或端点" : "添加第一个上游账号"}
+            action={
+              !search &&
+              filter === "all" && (
+                <Button onClick={() => setEditing("new")}>
+                  <Plus size={16} />
+                  添加账号
+                </Button>
+              )
+            }
+          />
+        )}
+        <TableFooter
+          count={filtered.length}
+          total={state.accounts.length}
+          noun="账号"
+        />
+      </section>
+      {editing && (
+        <AccountForm
+          account={editing === "new" ? undefined : editing}
+          state={state}
+          reload={reload}
+          notify={notify}
+          onClose={() => setEditing(null)}
+        />
+      )}
+      {deleting && (
+        <DeleteDialog
+          resource="accounts"
+          item={deleting}
+          onClose={() => setDeleting(null)}
+          reload={reload}
+          notify={notify}
+        />
+      )}
+    </>
+  );
+}
+
+function AccountForm({
+  account,
+  state,
+  reload,
+  notify,
+  onClose,
+}: PageProps & { account?: Account; onClose: () => void }) {
+  const [name, setName] = useState(account?.name || "");
+  const [endpoint, setEndpoint] = useState(account?.endpoint || "");
+  const [secret, setSecret] = useState("");
+  const [protocols, setProtocols] = useState(
+    account?.protocols || ["responses", "compact"],
+  );
+  const [models, setModels] = useState<string[]>(account?.models || []);
+  const [available, setAvailable] = useState<string[]>(account?.models || []);
+  const [manualModel, setManualModel] = useState("");
+  const [groups, setGroups] = useState<string[]>(account?.group_ids || []);
+  const [priority, setPriority] = useState(account?.priority ?? 0);
+  const [rpm, setRpm] = useState(account?.rpm || 0);
+  const [concurrency, setConcurrency] = useState(account?.concurrency || 0);
+  const [enabled, setEnabled] = useState(account?.enabled ?? true);
+  const [busy, setBusy] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [error, setError] = useState("");
+  async function discover() {
+    setDiscovering(true);
+    setError("");
+    try {
+      const result = await api<{ models: string[] }>(
+        "/models/discover",
+        "POST",
+        {
+          endpoint,
+          api_key: secret,
+          ...(account ? { account_id: account.id } : {}),
+        },
+      );
+      setAvailable([...new Set([...result.models, ...models])]);
+      notify(`已获取 ${result.models.length} 个模型`);
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setDiscovering(false);
+    }
+  }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!protocols.length) {
+      setError("至少选择一种协议");
+      return;
+    }
+    if (!groups.length) {
+      setError("至少选择一个分组");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await api(
+        account ? `/accounts/${account.id}` : "/accounts",
+        account ? "PUT" : "POST",
+        {
+          name: name.trim(),
+          endpoint: endpoint.trim(),
+          api_key: secret,
+          protocols,
+          models,
+          group_ids: groups,
+          priority,
+          rpm,
+          concurrency,
+          enabled,
+        },
+      );
+      await reload();
+      onClose();
+      notify(account ? "账号已更新" : "账号已添加");
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal
+      title={account ? "编辑账号" : "添加上游账号"}
+      subtitle="连接与请求调度"
+      onClose={onClose}
+      busy={busy || discovering}
+      wide
+    >
+      <ModalForm
+        onSubmit={submit}
+        onClose={onClose}
+        busy={busy || discovering}
+        error={error}
+        submit={account ? "保存更改" : "添加账号"}
+      >
+        <Field label="账号名称">
+          <input
+            autoFocus
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="例如：主线路"
+            required
+            maxLength={100}
+          />
+        </Field>
+        <Field label="上游端点">
+          <input
+            type="url"
+            value={endpoint}
+            onChange={(event) => setEndpoint(event.target.value)}
+            placeholder="https://api.example.com/v1"
+            required
+            spellCheck={false}
+          />
+        </Field>
+        <Field label="API Key" hint={account ? "留空保留已有密钥" : undefined}>
+          <input
+            type="password"
+            autoComplete="off"
+            value={secret}
+            onChange={(event) => setSecret(event.target.value)}
+            required={!account}
+            placeholder={
+              account?.has_api_key ? "已保存 · 输入新密钥可替换" : "sk-…"
+            }
+          />
+        </Field>
+        <fieldset className="form-fieldset">
+          <legend>支持协议</legend>
+          <div className="protocol-options">
+            {["responses", "compact"].map((protocol) => (
+              <label className="protocol-option" key={protocol}>
+                <input
+                  type="checkbox"
+                  checked={protocols.includes(protocol)}
+                  onChange={(event) =>
+                    setProtocols(
+                      event.target.checked
+                        ? [...protocols, protocol]
+                        : protocols.filter((item) => item !== protocol),
+                    )
+                  }
+                />
+                <span>
+                  {protocol === "responses" ? "Responses" : "Compact"}
+                </span>
+                <code>
+                  {protocol === "responses"
+                    ? "/v1/responses"
+                    : "/v1/responses/compact"}
+                </code>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <div className="form-divider" />
+        <div className="field">
+          <div className="field-heading">
+            <span className="field-label">
+              可用模型<span>{models.length} 个已选</span>
+            </span>
+            <Button
+              type="button"
+              className="small-button"
+              busy={discovering}
+              disabled={!endpoint || (!secret && !account)}
+              onClick={() => void discover()}
+            >
+              <RefreshCw size={14} />
+              获取模型
+            </Button>
+          </div>
+          {available.length > 0 && (
+            <div className="model-select-tools">
+              <button type="button" onClick={() => setModels([...available])}>
+                全选
+              </button>
+              <span>/</span>
+              <button type="button" onClick={() => setModels([])}>
+                清空
+              </button>
+            </div>
+          )}
+          <div className="checkbox-list model-options">
+            {available.length ? (
+              available.map((model) => (
+                <label className="check-option" key={model}>
+                  <input
+                    type="checkbox"
+                    checked={models.includes(model)}
+                    onChange={(event) =>
+                      setModels(
+                        event.target.checked
+                          ? [...models, model]
+                          : models.filter((item) => item !== model),
+                      )
+                    }
+                  />
+                  <span className="mono">{model}</span>
+                </label>
+              ))
+            ) : (
+              <p className="field-hint">尚未获取模型</p>
+            )}
+          </div>
+          <div className="inline-input">
+            <input
+              aria-label="手动添加模型"
+              value={manualModel}
+              onChange={(event) => setManualModel(event.target.value)}
+              placeholder="手动添加模型 ID"
+            />
+            <IconButton
+              title="添加模型"
+              disabled={!manualModel.trim()}
+              onClick={() => {
+                const model = manualModel.trim();
+                setAvailable([...new Set([...available, model])]);
+                setModels([...new Set([...models, model])]);
+                setManualModel("");
+              }}
+            >
+              <Plus size={18} />
+            </IconButton>
+          </div>
+        </div>
+        <fieldset className="form-fieldset">
+          <legend>所属分组</legend>
+          {state.groups.length ? (
+            <div className="group-options">
+              {state.groups.map((group) => (
+                <label className="check-option" key={group.id}>
+                  <input
+                    type="checkbox"
+                    checked={groups.includes(group.id)}
+                    onChange={(event) =>
+                      setGroups(
+                        event.target.checked
+                          ? [...groups, group.id]
+                          : groups.filter((id) => id !== group.id),
+                      )
+                    }
+                  />
+                  <FolderClosed size={15} />
+                  <span>{group.name}</span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <ErrorBox message="请先在分组管理中创建分组" />
+          )}
+        </fieldset>
+        <div className="form-grid three">
+          <Field label="优先级" hint="数值越小越优先">
+            <input
+              type="number"
+              min={0}
+              max={999999}
+              value={priority}
+              onChange={(event) => setPriority(Number(event.target.value))}
+              required
+            />
+          </Field>
+          <Field label="RPM 上限" hint="0 表示不限">
+            <input
+              type="number"
+              min={0}
+              max={1000000}
+              value={rpm}
+              onChange={(event) => setRpm(Number(event.target.value))}
+              required
+            />
+          </Field>
+          <Field label="并发上限" hint="0 表示不限">
+            <input
+              type="number"
+              min={0}
+              max={1000000}
+              value={concurrency}
+              onChange={(event) => setConcurrency(Number(event.target.value))}
+              required
+            />
+          </Field>
+        </div>
+        <Toggle checked={enabled} onChange={setEnabled} label="启用此账号" />
+      </ModalForm>
+    </Modal>
+  );
+}
+
+export function KeysPage({ state, reload, notify }: PageProps) {
+  const [search, setSearch] = useState("");
+  const [editing, setEditing] = useState<RelayKey | "new" | null>(null);
+  const [deleting, setDeleting] = useState<RelayKey | null>(null);
+  const [created, setCreated] = useState<{ name: string; key: string } | null>(
+    null,
+  );
+  const [copying, setCopying] = useState("");
+  const endpoint = `${window.location.origin}/v1`;
+  const filtered = useMemo(
+    () =>
+      state.keys.filter((key) =>
+        `${key.name} ${key.prefix}`
+          .toLowerCase()
+          .includes(search.toLowerCase()),
+      ),
+    [state.keys, search],
+  );
+  async function copyKey(id: string) {
+    setCopying(id);
+    try {
+      const value = await api<{ key: string }>(`/keys/${id}/reveal`, "POST");
+      await copy(value.key);
+      notify("API Key 已复制");
+    } catch (failure) {
+      notify(errorMessage(failure), true);
+    } finally {
+      setCopying("");
+    }
+  }
+  return (
+    <>
+      <PageHeading
+        eyebrow="API ACCESS KEYS"
+        title="密钥管理"
+        count={state.keys.length}
+      >
+        <Button className="primary" onClick={() => setEditing("new")}>
+          <Plus size={17} />
+          创建密钥
+        </Button>
+      </PageHeading>
+      <div className="endpoint-band">
+        <div className="endpoint-icon">
+          <Link size={19} />
+        </div>
+        <div>
+          <span>API 端点</span>
+          <code>{endpoint}</code>
+        </div>
+        <CopyButton value={endpoint} notify={notify} title="复制 API 端点" />
+        <a
+          href={`${window.location.origin}/health`}
+          target="_blank"
+          rel="noreferrer"
+          className="icon-button"
+          aria-label="查看服务状态"
+          title="查看服务状态"
+        >
+          <ExternalLink size={16} />
+        </a>
+      </div>
+      <section className="data-section">
+        <div className="list-toolbar">
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="搜索密钥名称…"
+          />
+          <span className="toolbar-meta">
+            <KeyRound size={15} />
+            {state.keys.filter((key) => key.enabled).length} 个已启用
+          </span>
+        </div>
+        {filtered.length ? (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>密钥名称</th>
+                  <th>API Key</th>
+                  <th>分组</th>
+                  <th className="numeric">Token 用量</th>
+                  <th>状态</th>
+                  <th>创建时间</th>
+                  <th className="action-cell">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((key) => (
+                  <tr key={key.id}>
+                    <td>
+                      <div className="entity-cell">
+                        <span className="entity-icon">
+                          <KeyRound size={18} />
+                        </span>
+                        <strong>{key.name}</strong>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="key-preview">
+                        <code>{key.prefix}••••••••</code>
+                        <IconButton
+                          title="复制 API Key"
+                          disabled={copying === key.id}
+                          onClick={() => void copyKey(key.id)}
+                        >
+                          {copying === key.id ? (
+                            <RefreshCw size={15} className="spin" />
+                          ) : (
+                            <Copy size={15} />
+                          )}
+                        </IconButton>
+                      </div>
+                    </td>
+                    <td>
+                      <Badge>
+                        {state.groups.find((group) => group.id === key.group_id)
+                          ?.name || "未知分组"}
+                      </Badge>
+                    </td>
+                    <td className="numeric">
+                      <strong className="mono">
+                        {compact(
+                          (key.usage?.input_tokens || 0) +
+                            (key.usage?.output_tokens || 0),
+                        )}
+                      </strong>
+                      <span className="cell-secondary">
+                        缓存 {compact(key.usage?.cached_tokens || 0)}
+                      </span>
+                    </td>
+                    <td>
+                      <Badge variant={key.enabled ? "green" : "neutral"} dot>
+                        {key.enabled ? "已启用" : "已停用"}
+                      </Badge>
+                    </td>
+                    <td className="mono muted">{time(key.created_at)}</td>
+                    <td>
+                      <div className="row-actions">
+                        <IconButton
+                          title="编辑密钥"
+                          onClick={() => setEditing(key)}
+                        >
+                          <Pencil size={16} />
+                        </IconButton>
+                        <IconButton
+                          title="删除密钥"
+                          className="destructive"
+                          onClick={() => setDeleting(key)}
+                        >
+                          <Trash2 size={16} />
+                        </IconButton>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <Empty
+            title={search ? "没有匹配的密钥" : "还没有 API 密钥"}
+            detail={search ? "尝试其他密钥名称" : "创建第一个访问密钥"}
+            action={
+              !search && (
+                <Button onClick={() => setEditing("new")}>
+                  <Plus size={16} />
+                  创建密钥
+                </Button>
+              )
+            }
+          />
+        )}
+        <TableFooter
+          count={filtered.length}
+          total={state.keys.length}
+          noun="密钥"
+        />
+      </section>
+      {editing && (
+        <KeyForm
+          relayKey={editing === "new" ? undefined : editing}
+          state={state}
+          reload={reload}
+          notify={notify}
+          onClose={() => setEditing(null)}
+          onCreated={(name, key) => setCreated({ name, key })}
+        />
+      )}
+      {deleting && (
+        <DeleteDialog
+          resource="keys"
+          item={deleting}
+          onClose={() => setDeleting(null)}
+          reload={reload}
+          notify={notify}
+        />
+      )}
+      {created && (
+        <Modal
+          title="密钥已创建"
+          subtitle={created.name}
+          onClose={() => setCreated(null)}
+        >
+          <div className="modal-body">
+            <div className="secret-success">
+              <Check size={23} />
+            </div>
+            <Field label="API Key">
+              <textarea
+                className="secret-value mono"
+                readOnly
+                rows={3}
+                value={created.key}
+                onFocus={(event) => event.target.select()}
+              />
+            </Field>
+            <div className="secret-endpoint">
+              <span>API 端点</span>
+              <code>{endpoint}</code>
+            </div>
+          </div>
+          <div className="modal-footer">
+            <Button onClick={() => setCreated(null)}>完成</Button>
+            <Button
+              className="primary"
+              onClick={() => {
+                void copy(created.key)
+                  .then(() => notify("API Key 已复制"))
+                  .catch((failure) => notify(errorMessage(failure), true));
+              }}
+            >
+              <Copy size={16} />
+              复制密钥
+            </Button>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function KeyForm({
+  relayKey,
+  state,
+  reload,
+  notify,
+  onClose,
+  onCreated,
+}: PageProps & {
+  relayKey?: RelayKey;
+  onClose: () => void;
+  onCreated: (name: string, key: string) => void;
+}) {
+  const [name, setName] = useState(relayKey?.name || "");
+  const [group, setGroup] = useState(
+    relayKey?.group_id || state.groups[0]?.id || "",
+  );
+  const [enabled, setEnabled] = useState(relayKey?.enabled ?? true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api<{ key?: string }>(
+        relayKey ? `/keys/${relayKey.id}` : "/keys",
+        relayKey ? "PUT" : "POST",
+        relayKey
+          ? { name: name.trim(), group_id: group, enabled }
+          : { name: name.trim(), group_id: group },
+      );
+      await reload();
+      onClose();
+      if (result.key) onCreated(name, result.key);
+      else notify("密钥已更新");
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal
+      title={relayKey ? "编辑密钥" : "创建 API 密钥"}
+      onClose={onClose}
+      busy={busy}
+    >
+      <ModalForm
+        onSubmit={submit}
+        onClose={onClose}
+        busy={busy}
+        error={error}
+        submit={relayKey ? "保存更改" : "创建密钥"}
+      >
+        <Field label="密钥名称">
+          <input
+            autoFocus
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            required
+            maxLength={100}
+            placeholder="例如：开发环境"
+          />
+        </Field>
+        <Field label="所属分组">
+          <Select
+            value={group}
+            onChange={(event) => setGroup(event.target.value)}
+            required
+          >
+            <option value="" disabled>
+              选择分组
+            </option>
+            {state.groups.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {!state.groups.length && <ErrorBox message="请先创建分组" />}
+        {relayKey && (
+          <Toggle checked={enabled} onChange={setEnabled} label="启用此密钥" />
+        )}
+      </ModalForm>
+    </Modal>
+  );
+}
