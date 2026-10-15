@@ -124,6 +124,8 @@ async fn console(State(state): State<Shared>, headers: HeaderMap, uri: Uri) -> R
                 "font/woff2"
             } else if path.ends_with(".woff") {
                 "font/woff"
+            } else if path.ends_with(".txt") {
+                "text/plain; charset=utf-8"
             } else {
                 "text/html; charset=utf-8"
             };

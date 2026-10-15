@@ -113,4 +113,6 @@ cargo test --locked --all-targets --all-features
 
 ## Upstream Attribution And License
 
+Frontend dependency notices, including Inter's SIL Open Font License, are collected from the locked packages during each build. The resulting `assets/third-party-licenses.txt` is served by the app and included in the container at `/app/licenses/frontend-notices.txt`. Third-party components retain their own license terms.
+
 This project is released under the [MIT License](LICENSE). The bundled instruction profile text is adapted from **[MDX-Tom/gpt-instruct](https://github.com/MDX-Tom/gpt-instruct)**, supplied as `gpt-instruct-main.zip`, also MIT licensed. Its original copyright/license notice is retained in [third_party/gpt-instruct.LICENSE](third_party/gpt-instruct.LICENSE). Profiles are data imported by `scripts/import-profiles.ps1`, not upstream application source or an upstream model implementation. Retain both MIT notices when redistributing the project or container.

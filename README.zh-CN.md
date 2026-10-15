@@ -113,4 +113,6 @@ cargo test --locked --all-targets --all-features
 
 ## 上游参考与开源协议
 
+前端构建会自动收集锁定依赖的许可声明，包含 Inter 字体的 SIL Open Font License。生成的 `assets/third-party-licenses.txt` 由站点提供，并随镜像保存至 `/app/licenses/frontend-notices.txt`。第三方组件保留各自的许可条款。
+
 本项目以 [MIT 协议](LICENSE) 开源。内置指令文本参考并改编自用户提供的 `gpt-instruct-main.zip`，对应 **[MDX-Tom/gpt-instruct](https://github.com/MDX-Tom/gpt-instruct)**，其 MIT 原始版权及许可声明保留于 [third_party/gpt-instruct.LICENSE](third_party/gpt-instruct.LICENSE)。指令由 `scripts/import-profiles.ps1` 作为配置数据导入，并非复制上游应用或模型实现。分发源代码或容器时需保留双方 MIT 声明。

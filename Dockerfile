@@ -23,6 +23,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=backend --chown=zako:zako /build/target/release/zakoai-proxy /app/zakoai-proxy
 COPY --from=frontend --chown=zako:zako /build/web/dist/ /app/web/dist/
+COPY --from=frontend --chown=zako:zako /build/web/dist/assets/third-party-licenses.txt /app/licenses/frontend-notices.txt
 COPY --chown=zako:zako LICENSE third_party/gpt-instruct.LICENSE /app/licenses/
 ENV DATA_DIR=/data \
     WEB_DIR=/app/web/dist \

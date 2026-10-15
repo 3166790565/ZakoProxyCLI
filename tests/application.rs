@@ -33,6 +33,28 @@ async fn local_fonts_have_font_mime_type() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["content-type"], "font/woff2");
 }
+
+#[tokio::test]
+async fn license_notices_are_served_as_plain_text() {
+    let (dir, s) = fixture();
+    let assets = dir.path().join("web/assets");
+    std::fs::create_dir_all(&assets).unwrap();
+    std::fs::write(assets.join("third-party-licenses.txt"), "MIT license").unwrap();
+    let response = app(s)
+        .oneshot(
+            Request::builder()
+                .uri("/assets/third-party-licenses.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/plain; charset=utf-8"
+    );
+}
 async fn request(
     s: &Shared,
     method: &str,

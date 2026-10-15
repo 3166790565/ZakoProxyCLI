@@ -351,7 +351,7 @@ export default function App() {
             <span className="status-dot" />
           </div>
           <div className="sidebar-version">
-            <span>ZAKO / v0.1.0</span>
+            <span>ZAKO / v0.1.1</span>
             <a
               href="https://github.com/mizaawa/zakoai-proxy-cli"
               target="_blank"
