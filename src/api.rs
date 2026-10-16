@@ -314,9 +314,9 @@ fn save_account_impl(
     if a.protocols.is_empty()
         || a.protocols
             .iter()
-            .any(|p| p != "responses" && p != "compact")
+            .any(|p| !matches!(p.as_str(), "responses" | "compact" | "anthropic"))
     {
-        return Err(bad("Select responses or compact protocol"));
+        return Err(bad("Select responses, compact, or anthropic protocol"));
     }
     if a.api_key.len() > 4096 || a.models.len() > 500 || a.model_mappings.len() > 500 {
         return Err(bad("Account configuration is too large"));
@@ -563,6 +563,8 @@ pub struct DiscoverInput {
     api_key: String,
     #[serde(default)]
     account_id: Option<String>,
+    #[serde(default)]
+    protocols: Option<Vec<String>>,
 }
 pub async fn discover(
     State(s): State<Shared>,
@@ -571,22 +573,45 @@ pub async fn discover(
 ) -> ApiResult<Value> {
     auth(&s, &h)?;
     let url = crate::proxy::upstream_url(&input.endpoint, "models")?;
-    let key = if input.api_key.is_empty() {
+    let account = if input.api_key.is_empty() || input.protocols.is_none() {
         let c = s.store.config()?;
-        let a = c
-            .accounts
-            .iter()
+        c.accounts
+            .into_iter()
             .find(|a| Some(&a.id) == input.account_id.as_ref())
-            .ok_or_else(|| bad("API key is required"))?;
-        s.store.unseal(&a.api_key)?
+    } else {
+        None
+    };
+    let key = if input.api_key.is_empty() {
+        s.store.unseal(
+            &account
+                .as_ref()
+                .ok_or_else(|| bad("API key is required"))?
+                .api_key,
+        )?
     } else {
         input.api_key
     };
-    let mut r = s
+    let protocols = input
+        .protocols
+        .as_ref()
+        .or_else(|| account.as_ref().map(|a| &a.protocols));
+    let request = s
         .client
         .get(url)
-        .bearer_auth(key)
-        .timeout(std::time::Duration::from_secs(20))
+        .timeout(std::time::Duration::from_secs(20));
+    let request = if protocols.is_some_and(|items| items.iter().any(|p| p == "anthropic")) {
+        let request = request
+            .header("x-api-key", &key)
+            .header("anthropic-version", "2023-06-01");
+        if protocols.is_some_and(|items| items.iter().any(|p| p == "responses" || p == "compact")) {
+            request.bearer_auth(key)
+        } else {
+            request
+        }
+    } else {
+        request.bearer_auth(key)
+    };
+    let mut r = request
         .send()
         .await
         .map_err(|_| bad("Upstream connection failed"))?;

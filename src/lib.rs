@@ -93,6 +93,7 @@ pub fn app(state: Shared) -> Router {
         .route("/v1/models", get(proxy::models))
         .route("/v1/responses", post(proxy::responses))
         .route("/v1/responses/compact", post(proxy::compact))
+        .route("/v1/messages", post(proxy::messages))
         .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
         .fallback(console)
         .with_state(state)

@@ -41,6 +41,11 @@ export type PageProps = {
   notify: Notice;
 };
 
+const modelNameOrder = new Intl.Collator("en", {
+  numeric: true,
+  sensitivity: "base",
+});
+
 function DeleteDialog({
   resource,
   item,
@@ -335,8 +340,21 @@ function GroupForm({
 }: PageProps & { group?: Group; onClose: () => void }) {
   const [name, setName] = useState(group?.name || "");
   const [profiles, setProfiles] = useState<string[]>(group?.profile_ids || []);
+  const [profileSearch, setProfileSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const visibleProfiles = useMemo(() => {
+    const query = profileSearch.trim().toLowerCase();
+    return [...state.profiles]
+      .sort(
+        (a, b) =>
+          modelNameOrder.compare(a.models.join(" · "), b.models.join(" · ")) ||
+          modelNameOrder.compare(a.id, b.id),
+      )
+      .filter((item) =>
+        item.models.some((model) => model.toLowerCase().includes(query)),
+      );
+  }, [state.profiles, profileSearch]);
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -385,8 +403,29 @@ function GroupForm({
           <legend>
             破甲策略<span>{profiles.length} 个已选</span>
           </legend>
-          <div className="profile-options">
-            {state.profiles.map((item) => (
+          <div
+            className="profile-search"
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && event.target instanceof HTMLInputElement)
+                event.preventDefault();
+            }}
+          >
+            <SearchInput
+              value={profileSearch}
+              onChange={setProfileSearch}
+              placeholder="搜索破甲策略"
+            />
+            <span className="profile-results" role="status">
+              显示 {visibleProfiles.length} / {state.profiles.length} 个模型
+            </span>
+          </div>
+          <div
+            className="profile-options"
+            role="region"
+            aria-label="破甲策略模型列表"
+            tabIndex={0}
+          >
+            {visibleProfiles.map((item) => (
               <label className="profile-option" key={item.id}>
                 <input
                   type="checkbox"
@@ -405,11 +444,15 @@ function GroupForm({
                 <span className="profile-description">
                   <strong>{item.models.join(" · ")}</strong>
                 </span>
-                <span className="profile-selected" aria-hidden="true">
-                  已选择
-                </span>
               </label>
             ))}
+            {visibleProfiles.length === 0 && (
+              <p className="profile-empty">
+                {state.profiles.length === 0
+                  ? "暂无可用的破甲策略"
+                  : "没有匹配的模型，试试其他关键词"}
+              </p>
+            )}
           </div>
         </fieldset>
       </ModalForm>
@@ -649,7 +692,7 @@ function AccountForm({
   const [endpoint, setEndpoint] = useState(account?.endpoint || "");
   const [secret, setSecret] = useState("");
   const [protocols, setProtocols] = useState(
-    account?.protocols || ["responses", "compact"],
+    account?.protocols || ["responses", "compact", "anthropic"],
   );
   const [models, setModels] = useState<string[]>(account?.models || []);
   const [available, setAvailable] = useState<string[]>(account?.models || []);
@@ -694,6 +737,7 @@ function AccountForm({
         {
           endpoint,
           api_key: secret,
+          protocols,
           ...(account ? { account_id: account.id } : {}),
         },
       );
@@ -814,7 +858,11 @@ function AccountForm({
         <fieldset className="form-fieldset">
           <legend>支持协议</legend>
           <div className="protocol-options">
-            {["responses", "compact"].map((protocol) => (
+            {[
+              { protocol: "responses", label: "Responses", path: "/v1/responses" },
+              { protocol: "compact", label: "Compact", path: "/v1/responses/compact" },
+              { protocol: "anthropic", label: "Anthropic", path: "/v1/messages" },
+            ].map(({ protocol, label, path }) => (
               <label className="protocol-option" key={protocol}>
                 <input
                   type="checkbox"
@@ -827,14 +875,8 @@ function AccountForm({
                     )
                   }
                 />
-                <span>
-                  {protocol === "responses" ? "Responses" : "Compact"}
-                </span>
-                <code>
-                  {protocol === "responses"
-                    ? "/v1/responses"
-                    : "/v1/responses/compact"}
-                </code>
+                <span>{label}</span>
+                <code>{path}</code>
               </label>
             ))}
           </div>

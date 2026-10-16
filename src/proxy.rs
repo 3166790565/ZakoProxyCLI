@@ -66,6 +66,12 @@ fn authorize(
         .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
         .map(|(_, value)| value)
         .filter(|v| !v.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-api-key")
+                .and_then(|v| v.to_str().ok())
+                .filter(|v| !v.is_empty())
+        })
         .ok_or((
             StatusCode::UNAUTHORIZED,
             "A valid proxy API key is required",
@@ -133,6 +139,35 @@ pub async fn compact(
     Json(body): Json<Value>,
 ) -> Response {
     forward(state, headers, body, "compact").await
+}
+
+pub async fn messages(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    forward(state, headers, body, "anthropic").await
+}
+
+fn apply_system(body: &mut Value, group: &Group, model: &str) -> Result<(), &'static str> {
+    let Some(instruction) = profiles::instruction(group, model) else {
+        return Ok(());
+    };
+    let system = match body.get("system") {
+        None => json!(instruction),
+        Some(Value::String(existing)) if existing.is_empty() => json!(instruction),
+        Some(Value::String(existing)) => json!(format!("{instruction}\n\n{existing}")),
+        Some(Value::Array(blocks)) => {
+            let mut blocks = blocks.clone();
+            blocks.insert(0, json!({"type":"text", "text":instruction}));
+            json!(blocks)
+        }
+        Some(_) => {
+            return Err("system must be a string or an array when a group instruction is applied");
+        }
+    };
+    body["system"] = system;
+    Ok(())
 }
 
 fn apply_instruction(body: &mut Value, group: &Group, model: &str) -> Result<(), &'static str> {
@@ -307,7 +342,12 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
         // Rebuild each attempt from the original request: account mappings can differ on failover.
         let mut upstream_body = body.clone();
         upstream_body["model"] = json!(actual_model);
-        if let Err(message) = apply_instruction(&mut upstream_body, &group, actual_model) {
+        let instruction_result = if protocol == "anthropic" {
+            apply_system(&mut upstream_body, &group, actual_model)
+        } else {
+            apply_instruction(&mut upstream_body, &group, actual_model)
+        };
+        if let Err(message) = instruction_result {
             log.entry.status = 400;
             return error(StatusCode::BAD_REQUEST, message);
         }
@@ -315,10 +355,10 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
         log.entry.attempts += 1;
         log.entry.account_id = account.id.clone();
         log.entry.status = 499;
-        let route = if protocol == "compact" {
-            "responses/compact"
-        } else {
-            "responses"
+        let route = match protocol {
+            "compact" => "responses/compact",
+            "anthropic" => "messages",
+            _ => "responses",
         };
         let url = match upstream_url(&account.endpoint, route) {
             Ok(url) => url,
@@ -339,11 +379,26 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
         let mut request = state
             .client
             .post(url)
-            .bearer_auth(&secret)
             .json(&upstream_body)
             .timeout(Duration::from_secs(u64::from(
                 config.settings.request_timeout_seconds.max(1),
             )));
+        request = if protocol == "anthropic" {
+            request.header("x-api-key", &secret).header(
+                "anthropic-version",
+                headers
+                    .get("anthropic-version")
+                    .cloned()
+                    .unwrap_or_else(|| HeaderValue::from_static("2023-06-01")),
+            )
+        } else {
+            request.bearer_auth(&secret)
+        };
+        if protocol == "anthropic"
+            && let Some(value) = headers.get("anthropic-beta")
+        {
+            request = request.header("anthropic-beta", value);
+        }
         for name in [
             "accept",
             "openai-beta",
@@ -383,7 +438,7 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
             }
         }
         let mut response_headers = HeaderMap::new();
-        for name in ["content-type", "x-request-id", "retry-after"] {
+        for name in ["content-type", "x-request-id", "request-id", "retry-after"] {
             if let Some(value) = upstream.headers().get(name) {
                 // An upstream must not reflect its credential through response headers.
                 if secret.is_empty()
@@ -537,7 +592,7 @@ impl Observer {
         let line = line.strip_suffix(b"\r").unwrap_or(&line);
         if line.is_empty() {
             match self.event_name.as_str() {
-                "response.completed" => self.completed = true,
+                "response.completed" | "message_stop" => self.completed = true,
                 "response.failed" | "response.incomplete" | "error" => self.failed = true,
                 _ => {}
             }
@@ -570,7 +625,7 @@ impl Observer {
             self.usage.output_tokens = self.usage.output_tokens.max(usage.output_tokens);
             self.usage.cached_tokens = self.usage.cached_tokens.max(usage.cached_tokens);
             match value.get("type").and_then(Value::as_str) {
-                Some("response.completed") => self.completed = true,
+                Some("response.completed" | "message_stop") => self.completed = true,
                 Some("response.failed" | "response.incomplete" | "error") => self.failed = true,
                 _ => {}
             }

@@ -111,7 +111,7 @@ fn enabled() -> bool {
     true
 }
 fn protocols() -> Vec<String> {
-    vec!["responses".into(), "compact".into()]
+    vec!["responses".into(), "compact".into(), "anthropic".into()]
 }
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct ApiKey {
@@ -382,12 +382,15 @@ pub fn usage(value: &Value) -> Usage {
     let u = value
         .get("usage")
         .or_else(|| value.pointer("/response/usage"))
+        .or_else(|| value.pointer("/message/usage"))
         .unwrap_or(value);
     Usage {
         input_tokens: u["input_tokens"]
             .as_u64()
             .or(u["prompt_tokens"].as_u64())
-            .unwrap_or(0),
+            .unwrap_or(0)
+            .saturating_add(u["cache_read_input_tokens"].as_u64().unwrap_or(0))
+            .saturating_add(u["cache_creation_input_tokens"].as_u64().unwrap_or(0)),
         output_tokens: u["output_tokens"]
             .as_u64()
             .or(u["completion_tokens"].as_u64())
@@ -395,6 +398,7 @@ pub fn usage(value: &Value) -> Usage {
         cached_tokens: u
             .pointer("/input_tokens_details/cached_tokens")
             .or_else(|| u.pointer("/prompt_tokens_details/cached_tokens"))
+            .or_else(|| u.get("cache_read_input_tokens"))
             .and_then(Value::as_u64)
             .unwrap_or(0),
     }

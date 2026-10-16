@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · English · [Security](SECURITY.md) · [API contract](API_CONTRACT.md)
 
-A self-hosted Rust Responses API relay with a responsive desktop/mobile administration console, SQLite persistence, and Docker Compose deployment. The console includes a dashboard, groups, upstream accounts, client API keys, and system settings.
+A self-hosted Rust Responses / Anthropic Messages API relay with a responsive desktop/mobile administration console, SQLite persistence, and Docker Compose deployment. The console includes a dashboard, groups, upstream accounts, client API keys, and system settings.
 
 ## Relay Recommendation: 杂鱼 API
 
@@ -60,7 +60,7 @@ Existing installations must first pull this source version and run the Compose b
 ## Configure The Relay
 
 1. **Groups:** create a group and use `profile_ids` to independently select strategies for `gpt-5.6-sol`, `gpt-6.1-sol`, and `gpt-6-astra`. Apart from its name, a group configures only profile selections, not a custom model list or instructions. Profiles match the exact actual model after account mapping: each selected model uses only its own profile, while an unselected model receives no injected strategy. Multiple selections never concatenate different profiles. Existing unmodified preset groups are recognized automatically. Referenced groups must be detached from accounts and keys before deletion.
-2. **Accounts:** enter an upstream endpoint and API key, discover/select actual upstream models, enable `responses` and/or `compact`, and assign groups. Optional `model_mappings` maps requested model IDs to actual upstream model IDs; every target must be selected in the account's available models. Resolution is single-hop, never recursive; a request without a mapping uses the same model ID. Endpoint roots with or without `/v1` work. Set RPM and concurrency to `0` for unlimited. A blank secret when editing retains the existing secret.
+2. **Accounts:** enter an upstream endpoint and API key, keep or adjust the default `responses`, `compact`, and `anthropic` selections, discover/select actual upstream models, and assign groups. Anthropic uses the native `/v1/messages` route and native authentication for model discovery. Optional `model_mappings` maps requested model IDs to actual upstream model IDs; every target must be selected in the account's available models. Resolution is single-hop, never recursive; a request without a mapping uses the same model ID. Endpoint roots with or without `/v1` work. Set RPM and concurrency to `0` for unlimited. A blank secret when editing retains the existing secret.
 3. **API keys:** create a named client key for a group. Copy it immediately or reveal/copy it later in the authenticated console. Its group can be changed without rotating the key. Disabling/deleting the key blocks future requests. The displayed API base URL uses the current site origin plus `/v1`.
 4. **System settings:** set the console entry path, retry budget, failure threshold, cooldown, request timeout, and statistics retention. Changing a password requires the current password and matching new-password confirmation; it revokes all sessions. Confirmation is not TOTP or another independent authentication factor.
 
@@ -72,7 +72,9 @@ The security entry moves the console from `/` to `/<entry>` while leaving `/heal
 
 ## Client API
 
-Supported endpoints are `GET /v1/models`, `POST /v1/responses`, and `POST /v1/responses/compact`. `/v1/models` includes selected actual models and valid requested-model aliases from accounts in the key's group. Authentication uses a generated proxy key, not your administrator password or upstream key. This project does not expose a Chat Completions compatibility route.
+Supported endpoints are `GET /v1/models`, `POST /v1/responses`, `POST /v1/responses/compact`, and `POST /v1/messages`. `/v1/models` includes selected actual models and valid requested-model aliases from accounts in the key's group. Authentication uses a generated proxy key via `Authorization: Bearer` or `x-api-key`. This project does not expose a Chat Completions compatibility route.
+
+For Anthropic clients, use this site's origin as the base URL and select models on accounts with `anthropic` enabled. `/v1/messages` preserves native messages, tool calls, and SSE, forwards `anthropic-version` (default `2023-06-01`) and `anthropic-beta`, and prepends a matching selected profile to `system` while preserving strings or text block arrays. Mapping, failover, limits, and logging use the same routing rules. Total input usage includes Anthropic cache reads and writes; cached usage counts reads.
 
 ```sh
 export ZAKO_API_KEY='YOUR_GENERATED_PROXY_KEY'

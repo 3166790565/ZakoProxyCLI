@@ -578,7 +578,7 @@ export function Dashboard({
               最近请求<Badge>{stats.recent.length}</Badge>
             </h2>
             <span className="section-subtitle">
-              所选时间段内最新 100 条记录
+              所选时间段内最新 100 条记录 · 滚动查看更多
             </span>
           </div>
           <span className="subtle">
@@ -587,7 +587,12 @@ export function Dashboard({
           </span>
         </div>
         {stats.recent.length ? (
-          <div className="table-scroll">
+          <div
+            className="table-scroll recent-requests-scroll"
+            role="region"
+            aria-label="最近请求，可滚动查看更多"
+            tabIndex={0}
+          >
             <table>
               <thead>
                 <tr>

@@ -2,7 +2,29 @@
 
 简体中文 · [English](README.en.md) · [安全说明](SECURITY.md) · [API 契约](API_CONTRACT.md)
 
-基于 Rust 的自托管 Responses API 中转，提供适配 PC 和移动端的管理控制台、SQLite 持久化和 Docker Compose 部署。侧边栏包含仪表盘、分组管理、账号管理、密钥管理和系统设置。
+基于 Rust 的自托管 Responses / Anthropic Messages API 中转，提供适配 PC 和移动端的管理控制台、SQLite 持久化和 Docker Compose 部署。侧边栏包含仪表盘、分组管理、账号管理、密钥管理和系统设置。
+
+## ⚠️ 免责声明 · Disclaimer
+
+### 简体中文
+
+> [!WARNING]
+> **严禁将本项目用于任何违法违纪活动。**
+
+本项目仅供合法、合规的学习、研究和在你本人有权操作的环境里使用。包括但不限于：未经授权的入侵、攻击、渗透、窃取数据；诈骗、洗钱、传播恶意程序；生成或传播违法有害内容；侵犯他人隐私、知识产权和其他合法权益；违反所在地法律法规或第三方平台、模型服务的使用条款。
+
+使用者须自行遵守所在国家和地区的法律法规，以及相关软件和服务的使用条款。使用本项目产生的一切行为和后果，由使用者自行承担，与项目作者及贡献者无关。如果你不同意以上内容，请不要下载、安装或使用本项目。
+
+### English
+
+> [!WARNING]
+> **This project must NOT be used for any illegal or unlawful activity.**
+
+It is provided only for lawful and compliant learning, research, and use in environments you are authorized to operate. Prohibited uses include, without limitation: unauthorized intrusion, attacks, penetration, or data theft; fraud, money laundering, or distributing malware; generating or spreading illegal or harmful content; infringing others' privacy, intellectual property, or other legal rights; and violating applicable laws or the terms of use of third-party platforms and model services.
+
+You are solely responsible for complying with the laws and regulations of your jurisdiction and with the terms of the software and services you use. All actions and consequences arising from the use of this project are borne entirely by the user, and the authors and contributors accept no liability. If you do not agree, do not download, install, or use this project.
+
+---
 
 # AI中转站推荐 -- 杂鱼API
 
@@ -63,7 +85,7 @@ Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。�
 ## 配置中转
 
 1. **分组管理：** 创建分组，在“破甲策略”中通过 `profile_ids` 独立勾选 `gpt-5.6-sol`、`gpt-6.1-sol`、`gpt-6-astra`。分组除名称外只配置策略选择，不再配置自定义模型列表或指令。按账号映射后的实际模型精确匹配已选策略：只使用该模型自己的配置，未勾选则不注入，同时勾选多个模型不会拼接不同策略。旧版未修改过的内置模板分组会自动识别。删除分组前需先解除账号和密钥引用。
-2. **账号管理：** 输入上游端点及 API key，拉取并勾选上游实际可用模型，启用 `responses` / `compact` 协议并选择所属分组。可通过 `model_mappings` 设置“请求模型 → 实际模型”，映射目标必须已勾选；映射仅执行一次，不递归串联，未配置映射的请求使用同名模型。端点可带或不带 `/v1`。RPM 和并发限制设为 `0` 表示不限制；编辑时密钥留空会保留原密钥。
+2. **账号管理：** 输入上游端点及 API key，“支持协议”默认勾选 `responses` / `compact` / `anthropic`，可按需取消，再拉取并勾选上游实际可用模型、选择所属分组。Anthropic 对应原生 `/v1/messages` 链路，获取模型时也使用 Anthropic 鉴权。可通过 `model_mappings` 设置“请求模型 → 实际模型”，映射目标必须已勾选；映射仅执行一次，不递归串联，未配置映射的请求使用同名模型。端点可带或不带 `/v1`。RPM 和并发限制设为 `0` 表示不限制；编辑时密钥留空会保留原密钥。
 3. **密钥管理：** 为指定分组创建命名的客户端 API key，可在创建后及之后登录控制台时复制。修改所属分组无需更换 key；停用或删除后阻止新的请求。API 基础地址为当前站点来源加 `/v1`。
 4. **系统设置：** 设置安全入口、最大重试数、失败阈值、冷却时间、请求超时及统计保留天数。修改密码需验证原密码并再次确认新密码，成功后撤销所有会话。此处二次确认不是 TOTP 等独立第二认证因素。
 
@@ -75,7 +97,9 @@ Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。�
 
 ## 客户端 API
 
-提供 `GET /v1/models`、`POST /v1/responses` 和 `POST /v1/responses/compact`。`/v1/models` 包含当前分组账号已勾选的实际模型及有效映射的请求模型名。鉴权使用控制台生成的中转密钥，而非管理员密码或上游密钥；项目没有 Chat Completions 兼容路由。
+提供 `GET /v1/models`、`POST /v1/responses`、`POST /v1/responses/compact` 和 `POST /v1/messages`。`/v1/models` 包含当前分组账号已勾选的实际模型及有效映射的请求模型名。鉴权使用控制台生成的中转密钥，通过 `Authorization: Bearer` 或 `x-api-key` 传入；项目没有 Chat Completions 兼容路由。
+
+Anthropic 客户端使用当前站点作为服务地址，选择已启用 `anthropic` 协议的账号模型。`/v1/messages` 保留原生消息、工具调用与 SSE，转发 `anthropic-version`（默认 `2023-06-01`）及 `anthropic-beta`。匹配分组策略时前置到 `system`，保留原有字符串或文本块数组。模型映射、故障切换、限流及统计沿用相同调度规则；输入 token 包含 Anthropic 缓存读取及写入，缓存命中 token 统计读取量。
 
 ```sh
 export ZAKO_API_KEY='YOUR_GENERATED_PROXY_KEY'
@@ -138,4 +162,12 @@ cargo test --locked --all-targets --all-features
 
 前端构建会自动收集锁定依赖的许可声明，包含 Inter 字体的 SIL Open Font License。生成的 `assets/third-party-licenses.txt` 由站点提供，并随镜像保存至 `/app/licenses/frontend-notices.txt`。第三方组件保留各自的许可条款。
 
-本项目以 [MIT 协议](LICENSE) 开源。内置指令配置包含改编自 [MDX-Tom/gpt-instruct](https://github.com/MDX-Tom/gpt-instruct) 的文本，其依法需保留的 MIT 版权及许可声明见 [third_party/gpt-instruct.LICENSE](third_party/gpt-instruct.LICENSE)。这些指令是导入的配置数据，并非上游应用代码或模型实现。分发源代码或容器时需保留双方 MIT 声明。
+本项目以 [MIT 协议](LICENSE) 开源。
+
+### 上游项目与许可遵循
+
+内置指令配置借鉴并改编自 [MDX-Tom/gpt-instruct](https://github.com/MDX-Tom/gpt-instruct)，遵循其 [MIT 许可条款](https://github.com/MDX-Tom/gpt-instruct/blob/main/LICENSE)。感谢上游作者与贡献者的开源工作。
+
+- **上游版权：** Copyright (c) 2026 li lingbo；Copyright (c) 2026 yynxxxxx。
+- **许可保留：** 完整版权与许可声明见 [third_party/gpt-instruct.LICENSE](third_party/gpt-instruct.LICENSE)，分发源码或容器时须保留本项目与上游的 MIT 声明。
+- **借鉴范围：** 这些指令是导入的配置数据，并非上游应用代码或模型实现。
