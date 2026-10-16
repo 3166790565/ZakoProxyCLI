@@ -25,7 +25,7 @@ pub fn is_https(headers: &HeaderMap) -> bool {
             .and_then(|v| v.to_str().ok())
             == Some("https")
 }
-fn cookie(headers: &HeaderMap) -> &str {
+pub(crate) fn cookie(headers: &HeaderMap) -> &str {
     headers
         .get(header::COOKIE)
         .and_then(|v| v.to_str().ok())
@@ -33,6 +33,43 @@ fn cookie(headers: &HeaderMap) -> &str {
         .split(';')
         .find_map(|part| part.trim().strip_prefix("zako_session="))
         .unwrap_or("")
+}
+
+/// Returns whether a browser request carries a syntactically valid authority
+/// and, when present, an Origin that belongs to that authority.  The console
+/// uses this before redirecting an authenticated request from `/` so a forged
+/// Host/Origin pair cannot turn the redirect into an open redirect oracle.
+pub(crate) fn valid_access_host(headers: &HeaderMap) -> bool {
+    let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) else {
+        return false;
+    };
+    if host.is_empty()
+        || host.chars().any(|c| {
+            c.is_ascii_control() || c.is_whitespace() || matches!(c, '/' | '\\' | '?' | '#' | '@')
+        })
+    {
+        return false;
+    }
+    let Ok(host_url) = reqwest::Url::parse(&format!("http://{host}/")) else {
+        return false;
+    };
+    if host_url.host_str().is_none()
+        || !host_url.username().is_empty()
+        || host_url.password().is_some()
+    {
+        return false;
+    }
+    let Some(origin) = headers.get(header::ORIGIN) else {
+        return true;
+    };
+    let Ok(origin) = reqwest::Url::parse(origin.to_str().unwrap_or("")) else {
+        return false;
+    };
+    if !matches!(origin.scheme(), "http" | "https") {
+        return false;
+    }
+    let authority = origin[url::Position::BeforeHost..url::Position::AfterPort].to_owned();
+    authority == host
 }
 fn entry(state: &Shared, headers: &HeaderMap) -> Result<(), ApiError> {
     let cfg = state.store.config()?;

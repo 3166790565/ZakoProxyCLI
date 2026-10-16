@@ -255,6 +255,14 @@ export default function App() {
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
   }, [mobileNav]);
+  useEffect(() => {
+    document.documentElement.classList.toggle("nav-open-lock", mobileNav);
+    document.body.classList.toggle("nav-open-lock", mobileNav);
+    return () => {
+      document.documentElement.classList.remove("nav-open-lock");
+      document.body.classList.remove("nav-open-lock");
+    };
+  }, [mobileNav]);
   async function refresh() {
     setRefreshing(true);
     try {
@@ -309,14 +317,12 @@ export default function App() {
   const activePage = navigation.find((item) => item.id === page)!;
   const props = { state, reload: loadState, notify };
   return (
-    <div className="app-shell">
-      {mobileNav && (
-        <button
-          className="nav-backdrop"
-          aria-label="关闭导航"
-          onClick={() => setMobileNav(false)}
-        />
-      )}
+    <div className={`app-shell ${mobileNav ? "mobile-nav-open" : ""}`}>
+      <button
+        className={`nav-backdrop ${mobileNav ? "is-open" : ""}`}
+        aria-label="关闭导航"
+        onClick={() => setMobileNav(false)}
+      />
       <aside className={`sidebar ${mobileNav ? "nav-open" : ""}`}>
         <div className="sidebar-brand">
           <Brand dark />

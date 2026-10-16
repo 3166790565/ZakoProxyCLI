@@ -260,6 +260,61 @@ async fn security_entry_hides_console_and_administration() {
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn authenticated_root_redirects_to_security_entry_for_valid_host() {
+    let (dir, s) = fixture();
+    let cookie = setup(&s).await;
+    let settings = json!({"security_path":"secret-entry","max_retries":2,"failure_threshold":2,"cooldown_seconds":60,"request_timeout_seconds":120,"retention_days":90});
+    assert_eq!(
+        request(&s, "PUT", "/api/settings", settings, &cookie, "/")
+            .await
+            .0,
+        StatusCode::OK
+    );
+
+    std::fs::create_dir_all(dir.path().join("web")).unwrap();
+    let response = app(s.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/")
+                .header("host", "console.example.test")
+                .header("origin", "https://console.example.test")
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(response.headers()["location"], "/secret-entry");
+
+    let response = app(s.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/")
+                .header("host", "console.example.test")
+                .header("origin", "https://attacker.invalid")
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let response = app(s)
+        .oneshot(
+            Request::builder()
+                .uri("/")
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
 async fn upstream(failing: bool) -> (String, tokio::task::JoinHandle<()>) {
     let router=Router::new().route("/v1/models",get(||async{axum::Json(json!({"data":[{"id":"mock-model"}]}))}))
         .route("/v1/responses",post(move|headers:axum::http::HeaderMap,axum::Json(body):axum::Json<Value>|async move{

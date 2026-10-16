@@ -109,6 +109,21 @@ async fn console(State(state): State<Shared>, headers: HeaderMap, uri: Uri) -> R
     };
     let entry = format!("/{}", cfg.settings.security_path);
     let asset = path.starts_with("/assets/") || path == "/favicon.svg";
+    if path == "/"
+        && path != entry
+        && api::valid_access_host(&headers)
+        && state.store.authenticated(api::cookie(&headers))
+    {
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
+        let Ok(location) = entry.parse() else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+        response
+            .headers_mut()
+            .insert(axum::http::header::LOCATION, location);
+        return response;
+    }
     if path != entry && !asset {
         return StatusCode::NOT_FOUND.into_response();
     }

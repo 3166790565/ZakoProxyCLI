@@ -239,10 +239,6 @@ export function Modal({
       className={`modal ${wide ? "wide" : ""}`}
       onCancel={(event) => {
         event.preventDefault();
-        if (!busy) onClose();
-      }}
-      onClick={(event) => {
-        if (event.target === ref.current && !busy) onClose();
       }}
       aria-labelledby="modal-title"
     >
@@ -251,7 +247,7 @@ export function Modal({
           <h2 id="modal-title">{title}</h2>
           {subtitle && <p>{subtitle}</p>}
         </div>
-        <IconButton title="关闭" onClick={onClose} disabled={busy}>
+        <IconButton title="取消" onClick={onClose} disabled={busy}>
           <X size={19} />
         </IconButton>
       </div>
