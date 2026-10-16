@@ -22,6 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check release version consistency
+        run: |
+          python3 scripts/check-release-version.py
+          python3 -m unittest discover -s scripts -p 'test_*.py'
       - uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: rustfmt, clippy
@@ -73,6 +77,8 @@ jobs:
           docker compose pull
           docker compose build --pull
           docker tag ghcr.io/mizaawa/zakoai-proxy-cli:latest zakoai-proxy:ci
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          test "$(docker image inspect zakoai-proxy:ci --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$version"
       - name: Test real Docker replacement and rollback
         shell: bash
         run: |
@@ -123,7 +129,9 @@ jobs:
           set -euo pipefail
           docker compose up -d --no-build --wait --wait-timeout 120
           python3 - <<'PY'
-          import http.cookiejar, json, secrets, urllib.error, urllib.request
+          import http.cookiejar, json, secrets, tomllib, urllib.error, urllib.request
+          with open('Cargo.toml', 'rb') as manifest:
+              version = tomllib.load(manifest)['package']['version']
           base = 'http://127.0.0.1:1991'
           client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
           def call(path, body=None, expected=200):
@@ -140,8 +148,8 @@ jobs:
           call('/api/setup', {'username':'ci-updater','password':secrets.token_urlsafe(32)})
           status = call('/api/updates')
           assert status['configured'] and not status.get('error'), status
-          assert status['current_version'] == '0.3.1'
-          call('/api/updates', {'tag':'v0.3.1','current_password':'wrong-password'}, 403)
+          assert status['current_version'] == version
+          call('/api/updates', {'tag':'v' + version,'current_password':'wrong-password'}, 403)
           assert call('/api/bootstrap')['authenticated']
           call('/api/updates', {'tag':'--help','current_password':'wrong-password'}, 400)
           print('PASS updater health, authenticated status, strict tag and password verification; session retained')
