@@ -7,13 +7,18 @@ pub struct Profile {
     pub id: String,
     pub name: String,
     pub models: Vec<String>,
+    #[serde(default)]
     pub instruction: String,
     #[serde(default)]
     pub model_family: String,
 }
 
 pub fn model_family(model: &str) -> Option<&'static str> {
-    ["gpt-5.6", "gpt-6.1", "gpt-6"].into_iter().find(|family| {
+    [
+        "gpt-5.6", "gpt-6.1", "gpt-6", "claude", "grok", "gemini", "deepseek", "glm",
+    ]
+    .into_iter()
+    .find(|family| {
         model == *family
             || model
                 .strip_prefix(*family)
@@ -27,7 +32,24 @@ pub fn all() -> &'static [Profile] {
         let mut profiles: Vec<Profile> =
             serde_json::from_str(include_str!("../profiles/index.json"))
                 .expect("Embedded profiles must be valid JSON");
+        let coldcoffee: Vec<Profile> =
+            serde_json::from_str(include_str!("../profiles/coldcoffee/index.json"))
+                .expect("Embedded Coldcoffee catalog must be valid JSON");
+        for mut profile in coldcoffee {
+            profile.instruction = match profile.model_family.as_str() {
+                "claude" => include_str!("../profiles/coldcoffee/claude.md"),
+                "grok" => include_str!("../profiles/coldcoffee/grok.md"),
+                "gemini" => include_str!("../profiles/coldcoffee/gemini.md"),
+                "deepseek" => include_str!("../profiles/coldcoffee/deepseek.md"),
+                "glm" => include_str!("../profiles/coldcoffee/glm53.md"),
+                _ => panic!("Unsupported Coldcoffee model family"),
+            }
+            .into();
+            profiles.push(profile);
+        }
+        let mut ids = std::collections::HashSet::new();
         for profile in &mut profiles {
+            assert!(ids.insert(profile.id.clone()), "Profile IDs must be unique");
             let family = profile
                 .models
                 .first()
@@ -88,9 +110,51 @@ mod tests {
             ("gpt-5.60-sol", None),
             ("other-gpt-6", None),
             ("GPT-6", None),
+            ("claude-opus-5-5", Some("claude")),
+            ("grok-4.7", Some("grok")),
+            ("gemini-3.1-pro-preview", Some("gemini")),
+            ("deepseek-v4.1-flash", Some("deepseek")),
+            ("glm-5.3", Some("glm")),
+            ("claudelike-5", None),
+            ("grokish", None),
+            ("Gemini-3.1-pro", None),
         ] {
             assert_eq!(model_family(model), expected, "{model}");
         }
+    }
+
+    #[test]
+    fn coldcoffee_catalog_has_exact_requested_models_and_resolved_skills() {
+        let entries: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../profiles/coldcoffee/index.json")).unwrap();
+        assert_eq!(entries.len(), 28);
+        assert_eq!(all().len(), 31);
+        let mut models = std::collections::HashSet::new();
+        for entry in entries {
+            let profile = find(entry["id"].as_str().unwrap()).unwrap();
+            assert_eq!(profile.models.len(), 1);
+            let model = &profile.models[0];
+            assert!(!model.contains("svg"));
+            assert!(
+                models.insert(model.clone()),
+                "duplicate exact model {model}"
+            );
+            assert!(profile.instruction.contains("ZakoAI · 冷咖啡 API 内联适配"));
+            assert!(profile.instruction.contains("三拍"));
+            assert!(profile.instruction.contains("CHA-ROUTE"));
+            assert!(!profile.instruction.contains("{{"));
+            assert!(!profile.instruction.contains("127.0.0.1:13337"));
+            let group = Group {
+                profile_ids: vec![profile.id.clone()],
+                ..Default::default()
+            };
+            assert!(instruction(&group, model).is_some());
+            assert!(instruction(&group, &format!("{model}-unlisted")).is_none());
+        }
+        assert!(models.contains("gemini-3.1-flash-image"));
+        assert!(models.contains("claude-fable-5-1"));
+        assert!(models.contains("deepseek-v4-pro-0813"));
+        assert!(models.contains("glm-5.3"));
     }
 
     #[test]

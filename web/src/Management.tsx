@@ -692,7 +692,7 @@ function AccountForm({
   const [endpoint, setEndpoint] = useState(account?.endpoint || "");
   const [secret, setSecret] = useState("");
   const [protocols, setProtocols] = useState(
-    account?.protocols || ["responses", "compact", "anthropic"],
+    account?.protocols || ["responses", "compact", "chat", "anthropic"],
   );
   const [models, setModels] = useState<string[]>(account?.models || []);
   const [available, setAvailable] = useState<string[]>(account?.models || []);
@@ -861,6 +861,7 @@ function AccountForm({
             {[
               { protocol: "responses", label: "Responses", path: "/v1/responses" },
               { protocol: "compact", label: "Compact", path: "/v1/responses/compact" },
+              { protocol: "chat", label: "Chat Completions", path: "/v1/chat/completions" },
               { protocol: "anthropic", label: "Anthropic", path: "/v1/messages" },
             ].map(({ protocol, label, path }) => (
               <label className="protocol-option" key={protocol}>

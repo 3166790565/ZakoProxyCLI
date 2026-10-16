@@ -141,6 +141,14 @@ pub async fn compact(
     forward(state, headers, body, "compact").await
 }
 
+pub async fn chat_completions(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    forward(state, headers, body, "chat").await
+}
+
 pub async fn messages(
     State(state): State<Shared>,
     headers: HeaderMap,
@@ -181,6 +189,21 @@ fn apply_instruction(body: &mut Value, group: &Group, model: &str) -> Result<(),
         Some(_) => return Err("instructions must be a string when a group instruction is applied"),
     };
     body["instructions"] = Value::String(instructions);
+    Ok(())
+}
+
+fn apply_chat_instruction(
+    body: &mut Value,
+    group: &Group,
+    model: &str,
+) -> Result<(), &'static str> {
+    let Some(instruction) = profiles::instruction(group, model) else {
+        return Ok(());
+    };
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return Err("messages must be an array when a group instruction is applied");
+    };
+    messages.insert(0, json!({"role":"system", "content":instruction}));
     Ok(())
 }
 
@@ -342,10 +365,10 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
         // Rebuild each attempt from the original request: account mappings can differ on failover.
         let mut upstream_body = body.clone();
         upstream_body["model"] = json!(actual_model);
-        let instruction_result = if protocol == "anthropic" {
-            apply_system(&mut upstream_body, &group, actual_model)
-        } else {
-            apply_instruction(&mut upstream_body, &group, actual_model)
+        let instruction_result = match protocol {
+            "anthropic" => apply_system(&mut upstream_body, &group, actual_model),
+            "chat" => apply_chat_instruction(&mut upstream_body, &group, actual_model),
+            _ => apply_instruction(&mut upstream_body, &group, actual_model),
         };
         if let Err(message) = instruction_result {
             log.entry.status = 400;
@@ -358,6 +381,7 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
         let route = match protocol {
             "compact" => "responses/compact",
             "anthropic" => "messages",
+            "chat" => "chat/completions",
             _ => "responses",
         };
         let url = match upstream_url(&account.endpoint, route) {
@@ -619,6 +643,10 @@ impl Observer {
         }
     }
     fn event(&mut self, data: &[u8]) {
+        if data.trim_ascii() == b"[DONE]" {
+            self.completed = true;
+            return;
+        }
         if let Ok(value) = serde_json::from_slice::<Value>(data) {
             let usage = store::usage(&value);
             self.usage.input_tokens = self.usage.input_tokens.max(usage.input_tokens);

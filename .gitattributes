@@ -1,0 +1,2 @@
+profiles/coldcoffee/* text eol=lf
+third_party/coldcoffee.LICENSE text eol=lf whitespace=-blank-at-eof

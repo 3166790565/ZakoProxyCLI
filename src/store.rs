@@ -111,7 +111,12 @@ fn enabled() -> bool {
     true
 }
 fn protocols() -> Vec<String> {
-    vec!["responses".into(), "compact".into(), "anthropic".into()]
+    vec![
+        "responses".into(),
+        "compact".into(),
+        "chat".into(),
+        "anthropic".into(),
+    ]
 }
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct ApiKey {

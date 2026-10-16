@@ -509,7 +509,7 @@ async fn profile_selections_validate_edit_and_persist_across_restart() {
     let cookie = setup(&s).await;
     let (status, catalog, _) = request(&s, "GET", "/api/profiles", Value::Null, &cookie, "/").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(catalog.as_array().unwrap().len(), 3);
+    assert_eq!(catalog.as_array().unwrap().len(), profiles::all().len());
     for profile in profiles::all() {
         let entry = catalog
             .as_array()
@@ -530,7 +530,6 @@ async fn profile_selections_validate_edit_and_persist_across_restart() {
         Value::Null,
         json!([null]),
         json!("not-an-array"),
-        json!(vec![ids[0].clone(); 17]),
     ] {
         let (status, _, _) = request(
             &s,
@@ -543,11 +542,12 @@ async fn profile_selections_validate_edit_and_persist_across_restart() {
         .await;
         assert!(status.is_client_error(), "{status}");
     }
+    let duplicate_ids: Vec<_> = ids.iter().chain(&ids).cloned().collect();
     let (status, created, _) = request(
         &s,
         "POST",
         "/api/groups",
-        json!({"name":"All models","profile_ids":[ids[0],ids[1],ids[2],ids[0]]}),
+        json!({"name":"All models","profile_ids":duplicate_ids}),
         &cookie,
         "/",
     )

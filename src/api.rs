@@ -228,14 +228,14 @@ fn save_group_impl(
 ) -> ApiResult<Value> {
     auth(s, h)?;
     name(&g.name)?;
-    if g.profile_ids.len() > 16 {
+    let mut selected = std::collections::HashSet::new();
+    g.profile_ids.retain(|id| selected.insert(id.clone()));
+    if g.profile_ids.len() > profiles::all().len() {
         return Err(bad("Group configuration is too large"));
     }
     if g.profile_ids.iter().any(|id| profiles::find(id).is_none()) {
         return Err(bad("Unknown instruction profile"));
     }
-    let mut selected = std::collections::HashSet::new();
-    g.profile_ids.retain(|id| selected.insert(id.clone()));
     g.id = path.clone().unwrap_or_else(id);
     g.name = g.name.trim().into();
     s.store.update(|c| {
@@ -314,9 +314,11 @@ fn save_account_impl(
     if a.protocols.is_empty()
         || a.protocols
             .iter()
-            .any(|p| !matches!(p.as_str(), "responses" | "compact" | "anthropic"))
+            .any(|p| !matches!(p.as_str(), "responses" | "compact" | "chat" | "anthropic"))
     {
-        return Err(bad("Select responses, compact, or anthropic protocol"));
+        return Err(bad(
+            "Select responses, compact, chat, or anthropic protocol",
+        ));
     }
     if a.api_key.len() > 4096 || a.models.len() > 500 || a.model_mappings.len() > 500 {
         return Err(bad("Account configuration is too large"));
@@ -603,7 +605,11 @@ pub async fn discover(
         let request = request
             .header("x-api-key", &key)
             .header("anthropic-version", "2023-06-01");
-        if protocols.is_some_and(|items| items.iter().any(|p| p == "responses" || p == "compact")) {
+        if protocols.is_some_and(|items| {
+            items
+                .iter()
+                .any(|p| p == "responses" || p == "compact" || p == "chat")
+        }) {
             request.bearer_auth(key)
         } else {
             request

@@ -184,7 +184,7 @@ async fn new_accounts_default_to_all_protocols_and_explicit_selections_are_prese
         (
             "Default protocols",
             None,
-            json!(["responses", "compact", "anthropic"]),
+            json!(["responses", "compact", "chat", "anthropic"]),
         ),
         (
             "Explicit Responses only",
@@ -215,7 +215,10 @@ async fn new_accounts_default_to_all_protocols_and_explicit_selections_are_prese
     drop(state);
     let state = new_app(dir.path(), dir.path().join("web")).unwrap();
     let accounts = state.store.config().unwrap().accounts;
-    assert_eq!(accounts[0].protocols, ["responses", "compact", "anthropic"]);
+    assert_eq!(
+        accounts[0].protocols,
+        ["responses", "compact", "chat", "anthropic"]
+    );
     assert_eq!(accounts[1].protocols, ["responses"]);
 }
 

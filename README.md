@@ -2,7 +2,7 @@
 
 简体中文 · [English](README.en.md) · [安全说明](SECURITY.md) · [API 契约](API_CONTRACT.md)
 
-基于 Rust 的自托管 Responses / Anthropic Messages API 中转，提供适配 PC 和移动端的管理控制台、SQLite 持久化和 Docker Compose 部署。侧边栏包含仪表盘、分组管理、账号管理、密钥管理和系统设置。
+基于 Rust 的自托管 Responses / Chat Completions / Anthropic Messages API 中转，提供适配 PC 和移动端的管理控制台、SQLite 持久化和 Docker Compose 部署。侧边栏包含仪表盘、分组管理、账号管理、密钥管理和系统设置。
 
 ## ⚠️ 免责声明 · Disclaimer
 
@@ -84,12 +84,27 @@ Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。�
 
 ## 配置中转
 
-1. **分组管理：** 创建分组，在“破甲策略”中通过 `profile_ids` 独立勾选 `gpt-5.6-sol`、`gpt-6.1-sol`、`gpt-6-astra`。分组除名称外只配置策略选择，不再配置自定义模型列表或指令。按账号映射后的实际模型精确匹配已选策略：只使用该模型自己的配置，未勾选则不注入，同时勾选多个模型不会拼接不同策略。旧版未修改过的内置模板分组会自动识别。删除分组前需先解除账号和密钥引用。
-2. **账号管理：** 输入上游端点及 API key，“支持协议”默认勾选 `responses` / `compact` / `anthropic`，可按需取消，再拉取并勾选上游实际可用模型、选择所属分组。Anthropic 对应原生 `/v1/messages` 链路，获取模型时也使用 Anthropic 鉴权。可通过 `model_mappings` 设置“请求模型 → 实际模型”，映射目标必须已勾选；映射仅执行一次，不递归串联，未配置映射的请求使用同名模型。端点可带或不带 `/v1`。RPM 和并发限制设为 `0` 表示不限制；编辑时密钥留空会保留原密钥。
+1. **分组管理：** 创建分组，在“破甲策略”中通过 `profile_ids` 独立勾选所需模型策略。现有 3 个 GPT 策略保留，并新增 28 个 Claude、Grok、Gemini、DeepSeek 和 GLM 的逐模型策略，共 31 个，完整名单见下表。分组除名称外只配置策略选择，不再配置自定义模型列表或指令。按账号映射后的实际模型精确匹配已选策略：只使用该模型自己的配置，未勾选则不注入，同时勾选多个模型不会拼接不同策略。旧版未修改过的内置模板分组会自动识别。删除分组前需先解除账号和密钥引用。
+2. **账号管理：** 输入上游端点及 API key，“支持协议”默认勾选 `responses` / `compact` / `chat` / `anthropic`，可按上游中转站支持情况取消，再拉取并勾选上游实际可用模型、选择所属分组。`chat` 对应 `/v1/chat/completions`，`anthropic` 对应 `/v1/messages`；选择 Anthropic 获取模型时也使用 Anthropic 鉴权。模型名称不限定协议：例如 Grok、Gemini、DeepSeek 或 GLM 可以走中转站提供的 OpenAI 兼容或 Anthropic 兼容接口。可通过 `model_mappings` 设置“请求模型 → 实际模型”，映射目标必须已勾选；映射仅执行一次，不递归串联，未配置映射的请求使用同名模型。端点可带或不带 `/v1`。RPM 和并发限制设为 `0` 表示不限制；编辑时密钥留空会保留原密钥。
 3. **密钥管理：** 为指定分组创建命名的客户端 API key，可在创建后及之后登录控制台时复制。修改所属分组无需更换 key；停用或删除后阻止新的请求。API 基础地址为当前站点来源加 `/v1`。
 4. **系统设置：** 设置安全入口、最大重试数、失败阈值、冷却时间、请求超时及统计保留天数。修改密码需验证原密码并再次确认新密码，成功后撤销所有会话。此处二次确认不是 TOTP 等独立第二认证因素。
 
-例如，账号配置片段 `{"models":["gpt-6-astra"],"model_mappings":{"chat-main":"gpt-6-astra"}}` 允许客户端请求 `chat-main`，向上游发送的 `model` 为 `gpt-6-astra`；分组勾选 `gpt-6-astra` 策略后，注入该模型的策略，而不是按别名匹配。未设置映射的 `gpt-6-astra` 请求仍使用同名实际模型。`responses` 和 `compact` 使用相同规则。
+例如，账号配置片段 `{"models":["gpt-6-astra"],"model_mappings":{"chat-main":"gpt-6-astra"}}` 允许客户端请求 `chat-main`，向上游发送的 `model` 为 `gpt-6-astra`；分组勾选 `gpt-6-astra` 策略后，注入该模型的策略，而不是按别名匹配。未设置映射的 `gpt-6-astra` 请求仍使用同名实际模型。所有支持协议使用相同的模型映射与策略匹配规则。
+
+### 内置策略模型
+
+新增策略保留上游席位正文、工作链和完整路由技能，单次匹配注入约 64–66 KB 的 UTF-8 文本，会占用上下文并增加输入 token。来源、逐文件哈希及适配范围记录于 [profiles/coldcoffee/SOURCE.json](profiles/coldcoffee/SOURCE.json)；可使用 `python scripts/import-coldcoffee.py UPSTREAM_CHECKOUT` 从指定版本的干净上游副本重新生成，脚本只读取数据，不执行上游安装器或 Skill。
+
+| 模型系列 | 精确匹配的实际模型 ID |
+| --- | --- |
+| GPT（保留） | `gpt-5.6-sol`、`gpt-6.1-sol`、`gpt-6-astra` |
+| Claude | `claude-fable-5`、`claude-fable-5-1`、`claude-haiku-4-5`、`claude-haiku-5-5`、`claude-opus-4-5`、`claude-opus-4-6`、`claude-opus-4-7`、`claude-opus-4-8`、`claude-opus-5`、`claude-opus-5-5`、`claude-sonnet-4-5`、`claude-sonnet-4-6`、`claude-sonnet-5`、`claude-sonnet-5-5` |
+| Grok | `grok-4.7` |
+| Gemini | `gemini-3-flash`、`gemini-3.1-flash-image`、`gemini-3.1-pro`、`gemini-3.1-pro-preview`、`gemini-3.6-flash`、`gemini-3.7-flash`、`gemini-3.8-flash` |
+| DeepSeek | `deepseek-v4-flash`、`deepseek-v4-flash-0731`、`deepseek-v4-pro`、`deepseek-v4-pro-0813`、`deepseek-v4.1-flash` |
+| GLM | `glm-5.3` |
+
+每个模型单独选择，不按系列通配匹配。名单表示可选策略，并不承诺上游提供这些模型；以账号实际可用模型和协议为准。新增策略参考冷咖啡项目的客户端席位指令并改编为内联文本，DeepSeek 的 Skill 内容也以内联文本形式提供；代理不会安装本地 Skill、工具或客户端配置，也不会伪造工具执行结果。策略只会随请求发送给上游，实际模型行为须在使用的中转站验证。
 
 调度仅选择匹配当前分组、协议且映射后实际模型已勾选的可用账号，未勾选任何可用模型的账号不接收请求。**优先级数字越小越先尝试**，相同优先级按账号 ID 稳定排序。单请求最多尝试 `最大重试数 + 1` 个不同账号。每次尝试都从原始客户端请求重新应用当前账号的单跳映射，再按实际模型匹配分组策略；故障转移到其他账号时独立计算，不继承或叠加前一账号的策略。连接失败、HTTP 401、403、408、429 和 HTTP 5xx 可在响应开始前切换到下一账号；连续可重试失败达到阈值时进入冷却，冷却时间结束后重新参与调度。其余 4xx 原样返回，不触发重试。流式响应已开始后中断不会重放请求。RPM 窗口、并发及冷却状态只保存在当前进程，重启后重置；同一个数据卷只运行一个实例。
 
@@ -97,7 +112,9 @@ Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。�
 
 ## 客户端 API
 
-提供 `GET /v1/models`、`POST /v1/responses`、`POST /v1/responses/compact` 和 `POST /v1/messages`。`/v1/models` 包含当前分组账号已勾选的实际模型及有效映射的请求模型名。鉴权使用控制台生成的中转密钥，通过 `Authorization: Bearer` 或 `x-api-key` 传入；项目没有 Chat Completions 兼容路由。
+提供 `GET /v1/models`、`POST /v1/responses`、`POST /v1/responses/compact`、`POST /v1/chat/completions` 和 `POST /v1/messages`。`/v1/models` 包含当前分组账号已勾选的实际模型及有效映射的请求模型名。鉴权使用控制台生成的中转密钥，通过 `Authorization: Bearer` 或 `x-api-key` 传入。客户端与账号使用同一种请求协议，代理不转换 API 协议或补充 Google 等厂商的原生接口。
+
+Chat Completions 客户端使用当前站点加 `/v1` 作为基础地址，并启用账号的 `chat` 协议。`/v1/chat/completions` 保留原有消息、工具字段和 SSE，将匹配的已选策略作为独立的 `system` 消息前置，保留客户端原有消息及其他请求字段。JSON 和 SSE 响应沿用上游 Chat Completions 格式。
 
 Anthropic 客户端使用当前站点作为服务地址，选择已启用 `anthropic` 协议的账号模型。`/v1/messages` 保留原生消息、工具调用与 SSE，转发 `anthropic-version`（默认 `2023-06-01`）及 `anthropic-beta`。匹配分组策略时前置到 `system`，保留原有字符串或文本块数组。模型映射、故障切换、限流及统计沿用相同调度规则；输入 token 包含 Anthropic 缓存读取及写入，缓存命中 token 统计读取量。
 
@@ -114,7 +131,7 @@ curl -N http://localhost:1990/v1/responses \
   -d '{"model":"YOUR_REQUEST_MODEL_ID","input":"Hello","stream":true}'
 ```
 
-`YOUR_REQUEST_MODEL_ID` 可以是已勾选的实际模型名，也可以是账号配置的请求模型别名。上下文压缩请求使用 `/v1/responses/compact`，请求格式及实际支持情况由上游决定。两种协议均先将请求的 `model` 替换为当前账号解析出的实际模型；若分组为该实际模型勾选了策略，再向 `instructions` 字段前置该策略文本。原有客户端指令和其他字段予以保留；未匹配已选策略时不注入指令。SSE 事件转发同时读取用量和完成状态，反射出的上游凭证会被脱敏。上游的“破甲”配置在本项目中属于可选指令文本，不保证改变模型行为或消除拒答，实际结果取决于上游服务。
+`YOUR_REQUEST_MODEL_ID` 可以是已勾选的实际模型名，也可以是账号配置的请求模型别名。上下文压缩请求使用 `/v1/responses/compact`，请求格式及实际支持情况由上游决定。Responses 和 Compact 均先将请求的 `model` 替换为当前账号解析出的实际模型；若分组为该实际模型勾选了策略，再向 `instructions` 字段前置该策略文本。原有客户端指令和其他字段予以保留；未匹配已选策略时不注入指令。SSE 事件转发同时读取用量和完成状态，反射出的上游凭证会被脱敏。上游的“破甲”配置在本项目中属于可选指令文本，不保证改变模型行为或消除拒答，实际结果取决于上游服务。
 
 ## 统计与存储
 
@@ -171,3 +188,9 @@ cargo test --locked --all-targets --all-features
 - **上游版权：** Copyright (c) 2026 li lingbo；Copyright (c) 2026 yynxxxxx。
 - **许可保留：** 完整版权与许可声明见 [third_party/gpt-instruct.LICENSE](third_party/gpt-instruct.LICENSE)，分发源码或容器时须保留本项目与上游的 MIT 声明。
 - **借鉴范围：** 这些指令是导入的配置数据，并非上游应用代码或模型实现。
+
+新增 Claude、Grok、Gemini、DeepSeek 和 GLM 策略参考并改编自冷咖啡项目 [3641397194-wq/gpt6-Astra](https://github.com/3641397194-wq/gpt6-Astra)，参考版本为 [`09c7799a1fc2ef5f6f6cf4223b7a48abb39d2732`](https://github.com/3641397194-wq/gpt6-Astra/tree/09c7799a1fc2ef5f6f6cf4223b7a48abb39d2732)。感谢冷咖啡项目作者与贡献者。
+
+- **上游版权与协议：** Copyright (c) 2026 3641397194-wq，MIT License；原始声明保留于 [third_party/coldcoffee.LICENSE](third_party/coldcoffee.LICENSE)，同时分发到容器的 `/app/licenses/coldcoffee.LICENSE`。
+- **改编范围：** 将上游 Claude、Grok、Gemini、DeepSeek 和 GLM 客户端的席位指令和 Skill 文本改编为按模型选择的 API 请求内联策略；不包含上游桌面安装器、私有中转工作流或本地 Skill 执行环境。
+- **效果边界：** 引用和改编不表示上游认可本项目，也不构成绕过模型拒答、工具可用性或模型能力的保证。分发源码或容器时应保留本项目及上述第三方声明。
