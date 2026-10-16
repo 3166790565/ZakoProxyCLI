@@ -24,14 +24,56 @@ pub fn digest(value: &str) -> String {
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
+#[serde(from = "GroupInput")]
 pub struct Group {
     #[serde(default)]
     pub id: String,
     pub name: String,
     #[serde(default)]
+    pub profile_ids: Vec<String>,
+    #[serde(default)]
     pub models: Vec<String>,
     #[serde(default)]
     pub instruction: String,
+}
+
+#[derive(Deserialize)]
+struct GroupInput {
+    #[serde(default)]
+    id: String,
+    name: String,
+    #[serde(default, deserialize_with = "explicit_profile_ids")]
+    profile_ids: Option<Vec<String>>,
+    #[serde(default)]
+    models: Vec<String>,
+    #[serde(default)]
+    instruction: String,
+}
+
+fn explicit_profile_ids<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<String>::deserialize(deserializer).map(Some)
+}
+
+impl From<GroupInput> for Group {
+    fn from(input: GroupInput) -> Self {
+        let legacy = input.profile_ids.is_none();
+        let mut group = Self {
+            id: input.id,
+            name: input.name,
+            profile_ids: input.profile_ids.unwrap_or_default(),
+            models: input.models,
+            instruction: input.instruction,
+        };
+        if legacy {
+            crate::profiles::normalize_legacy_group(&mut group);
+        }
+        group
+    }
 }
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct Account {
@@ -138,7 +180,7 @@ fn read_config(db: &Connection) -> Result<Config> {
     })
     .optional()
     .map_err(|e| e.to_string())?
-    .map(|value| serde_json::from_str(&value).map_err(|e| e.to_string()))
+    .map(|value| serde_json::from_str::<Config>(&value).map_err(|e| e.to_string()))
     .transpose()
     .map(Option::unwrap_or_default)
 }

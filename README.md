@@ -41,7 +41,7 @@ docker compose down
 
 ## Configure The Relay
 
-1. **Groups:** create a group, optionally choose an imported instruction profile, and select the exact model IDs that should receive it. Empty model selection leaves requests unchanged. Referenced groups must be detached from accounts and keys before deletion.
+1. **Groups:** create a group and independently select strategies for `gpt-5.6-sol`, `gpt-6.1-sol`, and `gpt-6-astra`. Each selected model uses its own imported instruction profile; unselected models are forwarded unchanged. Multiple selections never concatenate different models' profiles. Existing unmodified preset groups are recognized automatically; custom exact-model instructions remain available under custom configuration. Referenced groups must be detached from accounts and keys before deletion.
 2. **Accounts:** enter an upstream endpoint and API key, discover/select models, enable `responses` and/or `compact`, and assign groups. Endpoint roots with or without `/v1` work. Set RPM and concurrency to `0` for unlimited. A blank secret when editing retains the existing secret.
 3. **API keys:** create a named client key for a group. Copy it immediately or reveal/copy it later in the authenticated console. Its group can be changed without rotating the key. Disabling/deleting the key blocks future requests. The displayed API base URL uses the current site origin plus `/v1`.
 4. **System settings:** set the console entry path, retry budget, failure threshold, cooldown, request timeout, and statistics retention. Changing a password requires the current password and matching new-password confirmation; it revokes all sessions. Confirmation is not TOTP or another independent authentication factor.

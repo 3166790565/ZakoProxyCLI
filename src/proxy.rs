@@ -1,5 +1,5 @@
 use crate::{
-    Shared,
+    Shared, profiles,
     store::{self, Account, ApiKey, Config, Group, RequestLog, Settings, Usage},
 };
 use axum::{
@@ -129,13 +129,13 @@ pub async fn compact(
 }
 
 fn apply_instruction(body: &mut Value, group: &Group, model: &str) -> Result<(), &'static str> {
-    if group.instruction.is_empty() || !group.models.iter().any(|item| item == model) {
+    let Some(instruction) = profiles::instruction(group, model) else {
         return Ok(());
-    }
+    };
     let instructions = match body.get("instructions") {
-        None => group.instruction.clone(),
-        Some(Value::String(existing)) if existing.is_empty() => group.instruction.clone(),
-        Some(Value::String(existing)) => format!("{}\n\n{existing}", group.instruction),
+        None => instruction.to_owned(),
+        Some(Value::String(existing)) if existing.is_empty() => instruction.to_owned(),
+        Some(Value::String(existing)) => format!("{instruction}\n\n{existing}"),
         Some(_) => return Err("instructions must be a string when a group instruction is applied"),
     };
     body["instructions"] = Value::String(instructions);
@@ -674,6 +674,84 @@ mod tests {
         assert_eq!(body["tools"], original["tools"]);
         assert_eq!(body["store"], original["store"]);
         assert!(apply_instruction(&mut json!({"instructions":[]}), &group, "selected").is_err());
+    }
+    #[test]
+    fn selected_profiles_apply_one_matching_model_and_preserve_fields() {
+        let group = Group {
+            profile_ids: profiles::all()
+                .iter()
+                .map(|profile| profile.id.clone())
+                .collect(),
+            models: vec!["gpt-6-astra".into(), "custom".into()],
+            instruction: "Custom fallback".into(),
+            ..Default::default()
+        };
+        for model in ["gpt-5.6-sol", "gpt-6-astra", "gpt-6.1-sol"] {
+            let expected = profiles::all()
+                .iter()
+                .find(|profile| profile.models.iter().any(|selected| selected == model))
+                .unwrap();
+            let original = json!({"model":model,"instructions":"Existing instructions","input":[{"role":"user","content":"hello"}],"tools":[{"type":"function","name":"tool"}],"metadata":{"custom":true},"store":false});
+            let mut body = original.clone();
+            apply_instruction(&mut body, &group, model).unwrap();
+            assert_eq!(
+                body["instructions"],
+                format!("{}\n\nExisting instructions", expected.instruction)
+            );
+            body["instructions"] = original["instructions"].clone();
+            assert_eq!(body, original);
+        }
+        for model in [
+            "gpt-5.6",
+            "gpt-6",
+            "gpt-6-sol",
+            "gpt-6.1",
+            "gpt-6.10-sol",
+            "gpt-60",
+            "unknown",
+        ] {
+            let original = json!({"model":model,"instructions":["unchanged"]});
+            let mut body = original.clone();
+            apply_instruction(&mut body, &group, model).unwrap();
+            assert_eq!(body, original);
+        }
+        let mut custom = json!({"instructions":"Existing"});
+        apply_instruction(&mut custom, &group, "custom").unwrap();
+        assert_eq!(custom["instructions"], "Custom fallback\n\nExisting");
+    }
+    #[test]
+    fn unselected_profiles_never_leak_through_legacy_builtin_text() {
+        let six = profiles::all()
+            .iter()
+            .find(|profile| profile.model_family == "gpt-6")
+            .unwrap();
+        let group = Group {
+            profile_ids: vec![six.id.clone()],
+            models: vec!["gpt-5.6-sol".into(), "gpt-6.1-sol".into()],
+            instruction: six.instruction.clone(),
+            ..Default::default()
+        };
+        for model in ["gpt-5.6-sol", "gpt-6.1-sol"] {
+            let original = json!({"model":model,"input":"hello","instructions":"Keep me"});
+            let mut body = original.clone();
+            apply_instruction(&mut body, &group, model).unwrap();
+            assert_eq!(body, original);
+        }
+        let mut absent = json!({"model":"gpt-6-astra"});
+        apply_instruction(&mut absent, &group, "gpt-6-astra").unwrap();
+        assert_eq!(absent["instructions"], six.instruction);
+        let mut empty = json!({"instructions":""});
+        apply_instruction(&mut empty, &group, "gpt-6-astra").unwrap();
+        assert_eq!(empty["instructions"], six.instruction);
+        assert!(apply_instruction(&mut json!({"instructions":[]}), &group, "gpt-6-astra").is_err());
+        let legacy_custom = Group {
+            models: vec!["gpt-6.1-sol".into()],
+            instruction: "Old custom text must not bypass the unchecked model".into(),
+            ..Default::default()
+        };
+        let mut unchecked = json!({"instructions":"Existing"});
+        apply_instruction(&mut unchecked, &legacy_custom, "gpt-6.1-sol").unwrap();
+        assert_eq!(unchecked["instructions"], "Existing");
     }
     #[test]
     fn sse_usage_survives_every_byte_boundary() {

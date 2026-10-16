@@ -1,4 +1,5 @@
 pub mod api;
+pub mod profiles;
 pub mod proxy;
 pub mod store;
 

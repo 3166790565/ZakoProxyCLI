@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import {
   Check,
+  ChevronDown,
   Copy,
   Database,
   ExternalLink,
@@ -16,7 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, compact, copy, errorMessage, time } from "./api";
-import type { Account, Group, RelayKey, State } from "./api";
+import type { Account, Group, Profile, RelayKey, State } from "./api";
 import {
   Badge,
   Button,
@@ -128,12 +129,35 @@ function TableFooter({
   );
 }
 
+function groupProfiles(group: Group, profiles: Profile[]) {
+  if (Array.isArray(group.profile_ids)) return group.profile_ids;
+  const legacyProfile = profiles.find(
+    (profile) =>
+      group.instruction === profile.instruction &&
+      group.models.length === profile.models.length &&
+      group.models.every((model) => profile.models.includes(model)),
+  );
+  return legacyProfile ? [legacyProfile.id] : [];
+}
+
+function groupModels(group: Group, profiles: Profile[]) {
+  const selected = groupProfiles(group, profiles);
+  return [
+    ...new Set([
+      ...profiles
+        .filter((profile) => selected.includes(profile.id))
+        .flatMap((profile) => profile.models),
+      ...group.models,
+    ]),
+  ];
+}
+
 export function GroupsPage({ state, reload, notify }: PageProps) {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Group | "new" | null>(null);
   const [deleting, setDeleting] = useState<Group | null>(null);
   const filtered = state.groups.filter((group) =>
-    `${group.name} ${group.models.join(" ")}`
+    `${group.name} ${groupModels(group, state.profiles).join(" ")}`
       .toLowerCase()
       .includes(search.toLowerCase()),
   );
@@ -171,7 +195,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
             <ShieldCheck size={19} />
           </span>
           <span>
-            指令模板<strong>{state.profiles.length}</strong>
+            模型策略<strong>{state.profiles.length}</strong>
           </span>
         </div>
       </div>
@@ -201,74 +225,77 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((group) => (
-                  <tr key={group.id}>
-                    <td>
-                      <div className="entity-cell">
-                        <span className="entity-icon">
-                          <FolderClosed size={18} />
-                        </span>
-                        <div>
-                          <strong>{group.name}</strong>
-                          <span className="cell-secondary mono">
-                            {group.id.slice(0, 8)}
+                {filtered.map((group) => {
+                  const effectiveModels = groupModels(group, state.profiles);
+                  const configured =
+                    !!group.instruction ||
+                    groupProfiles(group, state.profiles).length > 0;
+                  return (
+                    <tr key={group.id}>
+                      <td>
+                        <div className="entity-cell">
+                          <span className="entity-icon">
+                            <FolderClosed size={18} />
                           </span>
+                          <div>
+                            <strong>{group.name}</strong>
+                            <span className="cell-secondary mono">
+                              {group.id.slice(0, 8)}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="model-badges">
-                        {group.models.slice(0, 2).map((model) => (
-                          <Badge key={model}>{model}</Badge>
-                        ))}
-                        {group.models.length > 2 && (
-                          <Badge>+{group.models.length - 2}</Badge>
-                        )}
-                        {!group.models.length && (
-                          <span className="muted">未选择模型</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="mono">
-                      {
-                        state.accounts.filter((account) =>
-                          account.group_ids.includes(group.id),
-                        ).length
-                      }
-                    </td>
-                    <td className="mono">
-                      {
-                        state.keys.filter((key) => key.group_id === group.id)
-                          .length
-                      }
-                    </td>
-                    <td>
-                      <Badge
-                        variant={group.instruction ? "green" : "neutral"}
-                        dot
-                      >
-                        {group.instruction ? "已配置" : "未配置"}
-                      </Badge>
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <IconButton
-                          title="编辑分组"
-                          onClick={() => setEditing(group)}
-                        >
-                          <Pencil size={16} />
-                        </IconButton>
-                        <IconButton
-                          title="删除分组"
-                          className="destructive"
-                          onClick={() => setDeleting(group)}
-                        >
-                          <Trash2 size={16} />
-                        </IconButton>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td>
+                        <div className="model-badges">
+                          {effectiveModels.slice(0, 2).map((model) => (
+                            <Badge key={model}>{model}</Badge>
+                          ))}
+                          {effectiveModels.length > 2 && (
+                            <Badge>+{effectiveModels.length - 2}</Badge>
+                          )}
+                          {!effectiveModels.length && (
+                            <span className="muted">未选择模型</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="mono">
+                        {
+                          state.accounts.filter((account) =>
+                            account.group_ids.includes(group.id),
+                          ).length
+                        }
+                      </td>
+                      <td className="mono">
+                        {
+                          state.keys.filter((key) => key.group_id === group.id)
+                            .length
+                        }
+                      </td>
+                      <td>
+                        <Badge variant={configured ? "green" : "neutral"} dot>
+                          {configured ? "已配置" : "未配置"}
+                        </Badge>
+                      </td>
+                      <td>
+                        <div className="row-actions">
+                          <IconButton
+                            title="编辑分组"
+                            onClick={() => setEditing(group)}
+                          >
+                            <Pencil size={16} />
+                          </IconButton>
+                          <IconButton
+                            title="删除分组"
+                            className="destructive"
+                            onClick={() => setDeleting(group)}
+                          >
+                            <Trash2 size={16} />
+                          </IconButton>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -322,23 +349,22 @@ function GroupForm({
   onClose,
 }: PageProps & { group?: Group; onClose: () => void }) {
   const [name, setName] = useState(group?.name || "");
-  const [models, setModels] = useState<string[]>(group?.models || []);
-  const [instruction, setInstruction] = useState(group?.instruction || "");
-  const [profile, setProfile] = useState("");
+  const initialProfiles = group ? groupProfiles(group, state.profiles) : [];
+  const isLegacyProfile =
+    !!group && !Array.isArray(group.profile_ids) && initialProfiles.length > 0;
+  const [profiles, setProfiles] = useState<string[]>(initialProfiles);
+  const [models, setModels] = useState<string[]>(
+    isLegacyProfile ? [] : group?.models || [],
+  );
+  const [instruction, setInstruction] = useState(
+    isLegacyProfile ? "" : group?.instruction || "",
+  );
   const [manualModel, setManualModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const choices = [
     ...new Set([...state.profiles.flatMap((item) => item.models), ...models]),
   ];
-  function selectProfile(id: string) {
-    setProfile(id);
-    const selected = state.profiles.find((item) => item.id === id);
-    if (selected) {
-      setInstruction(selected.instruction);
-      setModels([...selected.models]);
-    }
-  }
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -347,7 +373,7 @@ function GroupForm({
       await api(
         group ? `/groups/${group.id}` : "/groups",
         group ? "PUT" : "POST",
-        { name: name.trim(), models, instruction },
+        { name: name.trim(), profile_ids: profiles, models, instruction },
       );
       await reload();
       onClose();
@@ -361,7 +387,7 @@ function GroupForm({
   return (
     <Modal
       title={group ? "编辑分组" : "创建分组"}
-      subtitle="路由与模型指令"
+      subtitle="模型策略与路由"
       onClose={onClose}
       busy={busy}
       wide
@@ -383,72 +409,101 @@ function GroupForm({
             maxLength={100}
           />
         </Field>
-        <Field label="指令模板" optional>
-          <Select
-            value={profile}
-            onChange={(event) => selectProfile(event.target.value)}
-          >
-            <option value="">自定义配置</option>
+        <fieldset className="form-fieldset profile-fieldset" disabled={busy}>
+          <legend>
+            破甲策略<span>{profiles.length} 个已选</span>
+          </legend>
+          <div className="profile-options">
             {state.profiles.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
+              <label className="profile-option" key={item.id}>
+                <input
+                  type="checkbox"
+                  checked={profiles.includes(item.id)}
+                  onChange={(event) =>
+                    setProfiles(
+                      event.target.checked
+                        ? [...profiles, item.id]
+                        : profiles.filter((id) => id !== item.id),
+                    )
+                  }
+                />
+                <span className="profile-checkbox" aria-hidden="true">
+                  <Check size={13} strokeWidth={2.5} />
+                </span>
+                <span className="profile-description">
+                  <strong>{item.models.join(" · ")}</strong>
+                </span>
+                <span className="profile-selected" aria-hidden="true">
+                  已选择
+                </span>
+              </label>
             ))}
-          </Select>
-        </Field>
-        <div className="field">
-          <span className="field-label">
-            应用模型<span>{models.length} 个已选</span>
-          </span>
-          <div className="checkbox-list">
-            {choices.length ? (
-              choices.map((model) => (
-                <label className="check-option" key={model}>
-                  <input
-                    type="checkbox"
-                    checked={models.includes(model)}
-                    onChange={(event) =>
-                      setModels(
-                        event.target.checked
-                          ? [...models, model]
-                          : models.filter((item) => item !== model),
-                      )
-                    }
-                  />
-                  <span className="mono">{model}</span>
-                </label>
-              ))
-            ) : (
-              <p className="field-hint">暂无模型，请添加模型 ID</p>
+          </div>
+        </fieldset>
+        <details className="group-advanced">
+          <summary>
+            <ChevronDown size={15} aria-hidden="true" />
+            自定义配置
+            {(models.length > 0 || instruction.length > 0) && (
+              <Badge>已配置</Badge>
             )}
+          </summary>
+          <div className="group-advanced-fields">
+            <div className="field">
+              <span className="field-label">
+                应用模型<span>{models.length} 个已选</span>
+              </span>
+              <div className="checkbox-list">
+                {choices.length ? (
+                  choices.map((model) => (
+                    <label className="check-option" key={model}>
+                      <input
+                        type="checkbox"
+                        checked={models.includes(model)}
+                        onChange={(event) =>
+                          setModels(
+                            event.target.checked
+                              ? [...models, model]
+                              : models.filter((item) => item !== model),
+                          )
+                        }
+                      />
+                      <span className="mono">{model}</span>
+                    </label>
+                  ))
+                ) : (
+                  <p className="field-hint">暂无模型，请添加模型 ID</p>
+                )}
+              </div>
+              <div className="inline-input">
+                <input
+                  aria-label="添加模型 ID"
+                  value={manualModel}
+                  onChange={(event) => setManualModel(event.target.value)}
+                  placeholder="自定义模型 ID"
+                />
+                <IconButton
+                  title="添加模型"
+                  disabled={!manualModel.trim()}
+                  onClick={() => {
+                    setModels([...new Set([...models, manualModel.trim()])]);
+                    setManualModel("");
+                  }}
+                >
+                  <Plus size={18} />
+                </IconButton>
+              </div>
+            </div>
+            <Field label="模型指令" optional>
+              <textarea
+                rows={6}
+                value={instruction}
+                onChange={(event) => setInstruction(event.target.value)}
+                placeholder="输入此分组的模型指令"
+              />
+            </Field>
           </div>
-          <div className="inline-input">
-            <input
-              aria-label="添加模型 ID"
-              value={manualModel}
-              onChange={(event) => setManualModel(event.target.value)}
-              placeholder="自定义模型 ID"
-            />
-            <IconButton
-              title="添加模型"
-              disabled={!manualModel.trim()}
-              onClick={() => {
-                setModels([...new Set([...models, manualModel.trim()])]);
-                setManualModel("");
-              }}
-            >
-              <Plus size={18} />
-            </IconButton>
-          </div>
-        </div>
-        <Field label="模型指令" optional>
-          <textarea
-            rows={6}
-            value={instruction}
-            onChange={(event) => setInstruction(event.target.value)}
-            placeholder="输入此分组的模型指令"
-          />
-        </Field>
+        </details>
       </ModalForm>
     </Modal>
   );

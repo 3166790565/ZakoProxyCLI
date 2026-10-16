@@ -7,7 +7,7 @@ use axum::{
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tower::ServiceExt;
-use zakoai_proxy::{Shared, app, new_app};
+use zakoai_proxy::{Shared, app, new_app, profiles};
 
 fn fixture() -> (tempfile::TempDir, Shared) {
     let dir = tempfile::tempdir().unwrap();
@@ -504,6 +504,289 @@ async fn discovery_handles_models_and_rejects_oversized_bodies() {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"], "Upstream model response is too large");
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn profile_selections_validate_edit_and_persist_across_restart() {
+    let (dir, s) = fixture();
+    let cookie = setup(&s).await;
+    let (status, catalog, _) = request(&s, "GET", "/api/profiles", Value::Null, &cookie, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(catalog.as_array().unwrap().len(), 3);
+    for profile in profiles::all() {
+        let entry = catalog
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == profile.id)
+            .unwrap();
+        assert_eq!(entry["models"], json!(profile.models));
+        assert_eq!(entry["instruction"], profile.instruction);
+        assert_eq!(entry["model_family"], profile.model_family);
+    }
+    let ids: Vec<_> = profiles::all()
+        .iter()
+        .map(|profile| profile.id.clone())
+        .collect();
+    for invalid in [
+        json!(["unknown-profile"]),
+        Value::Null,
+        json!([null]),
+        json!("not-an-array"),
+        json!(vec![ids[0].clone(); 17]),
+    ] {
+        let (status, _, _) = request(
+            &s,
+            "POST",
+            "/api/groups",
+            json!({"name":"Invalid","profile_ids":invalid}),
+            &cookie,
+            "/",
+        )
+        .await;
+        assert!(status.is_client_error(), "{status}");
+    }
+    let (status, created, _) = request(
+        &s,
+        "POST",
+        "/api/groups",
+        json!({"name":"All models","profile_ids":[ids[0],ids[1],ids[2],ids[0]]}),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    assert_eq!(created["profile_ids"], json!(ids));
+    let group_id = created["id"].as_str().unwrap();
+    let (status, unchanged, _) = request(
+        &s,
+        "PUT",
+        &format!("/api/groups/{group_id}"),
+        json!({"name":"Bad edit","profile_ids":["unknown-profile"]}),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{unchanged}");
+    let (status, updated, _) = request(
+        &s,
+        "PUT",
+        &format!("/api/groups/{group_id}"),
+        json!({"name":"Edited models","profile_ids":[ids[1],ids[2]]}),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(updated["profile_ids"], json!([ids[1], ids[2]]));
+    drop(s);
+    let s = new_app(dir.path(), dir.path().join("web")).unwrap();
+    let (status, groups, _) = request(&s, "GET", "/api/groups", Value::Null, &cookie, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(groups.as_array().unwrap().len(), 1);
+    assert_eq!(groups[0]["id"], group_id);
+    assert_eq!(groups[0]["profile_ids"], json!([ids[1], ids[2]]));
+    let (status, cleared, _) = request(
+        &s,
+        "PUT",
+        &format!("/api/groups/{group_id}"),
+        json!({"name":"Disabled profiles","profile_ids":[]}),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(cleared["profile_ids"], json!([]));
+}
+
+#[tokio::test]
+async fn old_groups_migrate_only_exact_presets_and_preserve_custom_fields() {
+    let (dir, s) = fixture();
+    let cookie = setup(&s).await;
+    let profile = &profiles::all()[1];
+    let mut config = serde_json::to_value(s.store.config().unwrap()).unwrap();
+    config["groups"] = json!([
+        {"id":"legacy-preset","name":"Old preset","models":profile.models,"instruction":profile.instruction},
+        {"id":"legacy-custom","name":"Custom","models":["custom-model"],"instruction":"Custom instruction"},
+        {"id":"explicit-empty","name":"Already deselected","profile_ids":[],"models":profile.models,"instruction":profile.instruction}
+    ]);
+    let db = rusqlite::Connection::open(dir.path().join("zako.db")).unwrap();
+    db.execute(
+        "UPDATE config SET value=?1 WHERE id=1",
+        [config.to_string()],
+    )
+    .unwrap();
+    drop(db);
+    let (status, groups, _) = request(&s, "GET", "/api/groups", Value::Null, &cookie, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(groups[0]["profile_ids"], json!([profile.id]));
+    assert_eq!(groups[0]["models"], json!([]));
+    assert_eq!(groups[0]["instruction"], "");
+    assert_eq!(groups[1]["profile_ids"], json!([]));
+    assert_eq!(groups[1]["models"], json!(["custom-model"]));
+    assert_eq!(groups[1]["instruction"], "Custom instruction");
+    assert_eq!(groups[2]["profile_ids"], json!([]));
+    assert_eq!(groups[2]["models"], json!(profile.models));
+    assert_eq!(groups[2]["instruction"], profile.instruction);
+    let (status, cleared, _) = request(
+        &s,
+        "PUT",
+        "/api/groups/legacy-preset",
+        json!({"name":"Deselected","profile_ids":[]}),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(cleared["profile_ids"], json!([]));
+    drop(s);
+    let s = new_app(dir.path(), dir.path().join("web")).unwrap();
+    assert!(s.store.config().unwrap().groups[0].profile_ids.is_empty());
+    assert_eq!(
+        s.store.config().unwrap().groups[1].instruction,
+        "Custom instruction"
+    );
+    assert!(s.store.config().unwrap().groups[2].profile_ids.is_empty());
+}
+
+#[tokio::test]
+async fn explicit_empty_profiles_preserve_deselection_with_stale_legacy_fields() {
+    let (dir, s) = fixture();
+    let cookie = setup(&s).await;
+    for profile in profiles::all() {
+        let (status, legacy, _) = request(
+            &s,
+            "POST",
+            "/api/groups",
+            json!({"name":"Legacy client","models":profile.models,"instruction":profile.instruction}),
+            &cookie,
+            "/",
+        ).await;
+        assert_eq!(status, StatusCode::OK, "{legacy}");
+        assert_eq!(legacy["profile_ids"], json!([profile.id]));
+        let group_id = legacy["id"].as_str().unwrap();
+        let (status, cleared, _) = request(
+            &s,
+            "PUT",
+            &format!("/api/groups/{group_id}"),
+            json!({"name":"Explicit deselection","profile_ids":[],"models":profile.models,"instruction":profile.instruction}),
+            &cookie,
+            "/",
+        ).await;
+        assert_eq!(status, StatusCode::OK, "{cleared}");
+        assert_eq!(cleared["profile_ids"], json!([]));
+        assert_eq!(cleared["models"], json!(profile.models));
+        assert_eq!(cleared["instruction"], profile.instruction);
+    }
+    drop(s);
+    let s = new_app(dir.path(), dir.path().join("web")).unwrap();
+    let (status, groups, _) = request(&s, "GET", "/api/groups", Value::Null, &cookie, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(groups.as_array().unwrap().len(), profiles::all().len());
+    for (group, profile) in s.store.config().unwrap().groups.iter().zip(profiles::all()) {
+        assert!(group.profile_ids.is_empty());
+        assert_eq!(group.models, profile.models);
+        assert_eq!(group.instruction, profile.instruction);
+        assert!(profiles::instruction(group, &profile.models[0]).is_none());
+    }
+}
+
+#[tokio::test]
+async fn selected_profiles_route_both_protocols_without_cross_model_injection() {
+    let (_dir, s) = fixture();
+    let cookie = setup(&s).await;
+    let echo = || async { axum::Json(json!({"unused":true})) };
+    let router = Router::new()
+        .route(
+            "/v1/responses",
+            post(|axum::Json(body): axum::Json<Value>| async move { axum::Json(body) }),
+        )
+        .route(
+            "/v1/responses/compact",
+            post(|axum::Json(body): axum::Json<Value>| async move { axum::Json(body) }),
+        )
+        .route("/v1/models", get(echo));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let profile_ids: Vec<_> = profiles::all().iter().map(|profile| &profile.id).collect();
+    let (status, group, _) = request(&s, "POST", "/api/groups", json!({"name":"Multi models","profile_ids":profile_ids,"models":["custom-model"],"instruction":"Custom fallback"}), &cookie, "/").await;
+    assert_eq!(status, StatusCode::OK, "{group}");
+    let gid = group["id"].as_str().unwrap();
+    let models = [
+        "gpt-5.6",
+        "gpt-5.6-sol",
+        "gpt-6",
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6.1",
+        "gpt-6.1-sol",
+        "gpt-6.10-sol",
+        "gpt-60",
+        "custom-model",
+    ];
+    let (status, account, _) = request(&s, "POST", "/api/accounts", json!({"name":"Echo","endpoint":endpoint,"api_key":"upstream-secret","models":models,"group_ids":[gid]}), &cookie, "/").await;
+    assert_eq!(status, StatusCode::OK, "{account}");
+    let (status, key, _) = request(
+        &s,
+        "POST",
+        "/api/keys",
+        json!({"name":"Integration","group_id":gid}),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{key}");
+    let key = key["key"].as_str().unwrap();
+    for path in ["/v1/responses", "/v1/responses/compact"] {
+        for model in models {
+            let original = json!({"model":model,"instructions":"Original instructions","input":[{"role":"user","content":"hello"}],"tools":[{"type":"function","name":"tool"}],"metadata":{"check":true},"store":false});
+            let (status, bytes) = proxy_request(&s, path, key, original.clone()).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{path} {model}: {}",
+                String::from_utf8_lossy(&bytes)
+            );
+            let mut output: Value = serde_json::from_slice(&bytes).unwrap();
+            let expected = if model == "custom-model" {
+                "Custom fallback\n\nOriginal instructions".into()
+            } else if let Some(profile) = profiles::all()
+                .iter()
+                .find(|profile| profile.models.iter().any(|selected| selected == model))
+            {
+                format!("{}\n\nOriginal instructions", profile.instruction)
+            } else {
+                "Original instructions".into()
+            };
+            assert_eq!(output["instructions"], expected, "{path} {model}");
+            output["instructions"] = original["instructions"].clone();
+            assert_eq!(output, original, "{path} {model}");
+        }
+    }
+    let six = profiles::all()
+        .iter()
+        .find(|profile| profile.model_family == "gpt-6")
+        .unwrap();
+    let (status, updated, _) = request(
+        &s,
+        "PUT",
+        &format!("/api/groups/{gid}"),
+        json!({"name":"Only 6","profile_ids":[six.id]}),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    for path in ["/v1/responses", "/v1/responses/compact"] {
+        for model in ["gpt-5.6-sol", "gpt-6.1-sol"] {
+            let original = json!({"model":model,"input":"hello","instructions":"Untouched"});
+            let (status, bytes) = proxy_request(&s, path, key, original.clone()).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), original);
+        }
     }
     task.abort();
 }

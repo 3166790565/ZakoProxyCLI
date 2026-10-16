@@ -52,6 +52,7 @@ export async function api<T = unknown>(
 export type Group = {
   id: string;
   name: string;
+  profile_ids: string[];
   models: string[];
   instruction: string;
 };
@@ -94,6 +95,7 @@ export type Settings = {
 export type Profile = {
   id: string;
   name: string;
+  model_family: string;
   models: string[];
   instruction: string;
 };

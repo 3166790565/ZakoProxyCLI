@@ -1,5 +1,5 @@
 use crate::{
-    ApiError, ApiResult, Shared, bad,
+    ApiError, ApiResult, Shared, bad, profiles,
     store::{Account, ApiKey, Group, Settings, Usage, digest, id, now, token},
     unauthorized,
 };
@@ -228,9 +228,14 @@ fn save_group_impl(
 ) -> ApiResult<Value> {
     auth(s, h)?;
     name(&g.name)?;
-    if g.instruction.len() > 256 * 1024 || g.models.len() > 200 {
+    if g.instruction.len() > 256 * 1024 || g.models.len() > 200 || g.profile_ids.len() > 16 {
         return Err(bad("Group configuration is too large"));
     }
+    if g.profile_ids.iter().any(|id| profiles::find(id).is_none()) {
+        return Err(bad("Unknown instruction profile"));
+    }
+    let mut selected = std::collections::HashSet::new();
+    g.profile_ids.retain(|id| selected.insert(id.clone()));
     g.id = path.clone().unwrap_or_else(id);
     g.name = g.name.trim().into();
     s.store.update(|c| {
@@ -605,9 +610,7 @@ pub async fn discover(
 }
 pub async fn profiles(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
     auth(&s, &h)?;
-    Ok(Json(
-        serde_json::from_str(include_str!("../profiles/index.json")).map_err(|e| e.to_string())?,
-    ))
+    Ok(Json(json!(profiles::all())))
 }
 #[derive(Deserialize)]
 pub struct Range {

@@ -5,8 +5,8 @@ All administration endpoints use `/api/`. Session cookie is `zako_session`, Http
 - GET `/api/bootstrap`: `{initialized:boolean, authenticated:boolean, username:string}`
 - POST `/api/setup`, POST `/api/login`: `{username,password}` -> session cookie
 - POST `/api/logout`
-- GET `/api/groups`: array `{id,name,models:string[],instruction:string}`
-- POST `/api/groups`, PUT `/api/groups/:id`: `{name,models,instruction}`. Models are model IDs to which the group instruction is applied. Empty models means no rewriting.
+- GET `/api/groups`: array `{id,name,profile_ids:string[],models:string[],instruction:string}`
+- POST `/api/groups`, PUT `/api/groups/:id`: `{name,profile_ids,models,instruction}`. `profile_ids` independently selects bundled strategies for `gpt-5.6-sol`, `gpt-6.1-sol`, and `gpt-6-astra`; only the exact requested selected model receives its own profile, never another model's profile. Unknown profile IDs are rejected and duplicates deduplicated. Unselected bundled models remain unchanged, including when legacy custom fields are present. Legacy `models`/`instruction` remain an exact-model custom fallback for other model IDs; bundled template text cannot be used as this fallback. Old stored preset groups without `profile_ids` are migrated automatically. Explicit `profile_ids:[]` disables bundled strategies and is never migrated back to a selection.
 - DELETE `/api/groups/:id` (reject referenced groups)
 - GET `/api/accounts`: array `{id,name,endpoint,models,group_ids,rpm,concurrency,priority,enabled,protocols,has_api_key, runtime:{active,failures,cooldown_until}}`. Secrets omitted. Lower priority number wins.
 - POST `/api/accounts`, PUT `/api/accounts/:id`: same fields plus `api_key`. Blank api_key on update retains previous secret. Protocols: `["responses","compact"]`. rpm/concurrency 0 unlimited.
@@ -21,7 +21,7 @@ All administration endpoints use `/api/`. Session cookie is `zako_session`, Http
 - PUT `/api/settings`: same object. Security path `""` or e.g. `"console-secret"`. After success frontend navigates to new path.
 - POST `/api/password`: `{current_password,new_password,confirm_password}` -> all sessions revoked, return to login
 - GET `/api/stats?from=unix_seconds&to=unix_seconds`: `{summary:{input_tokens,output_tokens,cached_tokens,uncached_tokens,total_tokens,cache_hit_rate,rpm,tpm,total_requests,success_rate,avg_latency_ms,cyber_count},daily:[{date,input_tokens,output_tokens,cached_tokens,total_requests,success_count,cyber_count}],recent:RequestLog[],accounts:{total,healthy,cooling},keys:number}`. Rates as percentages 0-100. Recent limited to 100. Dates UTC.
-- GET `/api/profiles`: `{id,name,models:string[],instruction:string}[]` upstream instruction profile choices
+- GET `/api/profiles`: `{id,name,models:string[],instruction:string,model_family:string}[]` upstream instruction profile choices. `models` defines exact supported request model IDs; `model_family` is display metadata, not a wildcard.
 - GET `/health`: `{status:"ok"}`
 
 Public API: GET `/v1/models`, POST `/v1/responses`, POST `/v1/responses/compact` with Bearer generated proxy key. Upstream endpoint may include `/v1` or omit it. Streaming passes raw SSE.
