@@ -4,6 +4,10 @@
 
 基于 Rust 的自托管 Responses API 中转，提供适配 PC 和移动端的管理控制台、SQLite 持久化和 Docker Compose 部署。侧边栏包含仪表盘、分组管理、账号管理、密钥管理和系统设置。
 
+*AI中转站推荐--杂鱼API（[点我跳转][https://www.zayuapi.com/]）*
+![image.png][https://www.mizaawa.com/usr/uploads/2026/10/3254530108.png]
+*稳定不掺水，已注册活跃用户高达3000+，自有私有原创反代协议好吃，支持GPT，Claude，Gemini，Grok外加大部分国模，价格始终处于国内第一低价梯队*
+
 ## Docker Compose 部署
 
 需要 Docker Engine / Docker Desktop 和 Docker Compose v2：
