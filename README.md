@@ -8,8 +8,6 @@
 
 [点我跳转](https://www.zayuapi.com/)
 
-![image.png](https://www.mizaawa.com/usr/uploads/2026/10/2898908578.png)
-
 *稳定不掺水，已注册活跃用户高达 3000+，自有私有原创反代协议号池，支持 GPT、Claude、Gemini、Grok 外加大部分国模，价格始终处于国内第一低价梯队。*
 
 ## 小白向教程
