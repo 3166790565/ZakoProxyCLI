@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
+  ArrowRight,
   Check,
-  ChevronDown,
   Copy,
   Database,
   ExternalLink,
@@ -129,26 +129,13 @@ function TableFooter({
   );
 }
 
-function groupProfiles(group: Group, profiles: Profile[]) {
-  if (Array.isArray(group.profile_ids)) return group.profile_ids;
-  const legacyProfile = profiles.find(
-    (profile) =>
-      group.instruction === profile.instruction &&
-      group.models.length === profile.models.length &&
-      group.models.every((model) => profile.models.includes(model)),
-  );
-  return legacyProfile ? [legacyProfile.id] : [];
-}
-
 function groupModels(group: Group, profiles: Profile[]) {
-  const selected = groupProfiles(group, profiles);
   return [
-    ...new Set([
-      ...profiles
-        .filter((profile) => selected.includes(profile.id))
+    ...new Set(
+      profiles
+        .filter((profile) => group.profile_ids.includes(profile.id))
         .flatMap((profile) => profile.models),
-      ...group.models,
-    ]),
+    ),
   ];
 }
 
@@ -195,7 +182,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
             <ShieldCheck size={19} />
           </span>
           <span>
-            模型策略<strong>{state.profiles.length}</strong>
+            破甲策略<strong>{state.profiles.length}</strong>
           </span>
         </div>
       </div>
@@ -204,7 +191,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
           <SearchInput
             value={search}
             onChange={setSearch}
-            placeholder="搜索分组或模型…"
+            placeholder="搜索分组或策略模型…"
           />
           <span className="toolbar-meta">
             <ListFilter size={15} />
@@ -217,19 +204,17 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
               <thead>
                 <tr>
                   <th>分组名称</th>
-                  <th>应用模型</th>
+                  <th>破甲策略</th>
                   <th>账号</th>
                   <th>密钥</th>
-                  <th>指令配置</th>
+                  <th>策略状态</th>
                   <th className="action-cell">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((group) => {
                   const effectiveModels = groupModels(group, state.profiles);
-                  const configured =
-                    !!group.instruction ||
-                    groupProfiles(group, state.profiles).length > 0;
+                  const configured = effectiveModels.length > 0;
                   return (
                     <tr key={group.id}>
                       <td>
@@ -254,7 +239,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
                             <Badge>+{effectiveModels.length - 2}</Badge>
                           )}
                           {!effectiveModels.length && (
-                            <span className="muted">未选择模型</span>
+                            <span className="muted">未启用策略</span>
                           )}
                         </div>
                       </td>
@@ -273,7 +258,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
                       </td>
                       <td>
                         <Badge variant={configured ? "green" : "neutral"} dot>
-                          {configured ? "已配置" : "未配置"}
+                          {configured ? "已启用" : "未启用"}
                         </Badge>
                       </td>
                       <td>
@@ -349,22 +334,9 @@ function GroupForm({
   onClose,
 }: PageProps & { group?: Group; onClose: () => void }) {
   const [name, setName] = useState(group?.name || "");
-  const initialProfiles = group ? groupProfiles(group, state.profiles) : [];
-  const isLegacyProfile =
-    !!group && !Array.isArray(group.profile_ids) && initialProfiles.length > 0;
-  const [profiles, setProfiles] = useState<string[]>(initialProfiles);
-  const [models, setModels] = useState<string[]>(
-    isLegacyProfile ? [] : group?.models || [],
-  );
-  const [instruction, setInstruction] = useState(
-    isLegacyProfile ? "" : group?.instruction || "",
-  );
-  const [manualModel, setManualModel] = useState("");
+  const [profiles, setProfiles] = useState<string[]>(group?.profile_ids || []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const choices = [
-    ...new Set([...state.profiles.flatMap((item) => item.models), ...models]),
-  ];
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -373,7 +345,7 @@ function GroupForm({
       await api(
         group ? `/groups/${group.id}` : "/groups",
         group ? "PUT" : "POST",
-        { name: name.trim(), profile_ids: profiles, models, instruction },
+        { name: name.trim(), profile_ids: profiles },
       );
       await reload();
       onClose();
@@ -387,7 +359,7 @@ function GroupForm({
   return (
     <Modal
       title={group ? "编辑分组" : "创建分组"}
-      subtitle="模型策略与路由"
+      subtitle="破甲策略"
       onClose={onClose}
       busy={busy}
       wide
@@ -440,70 +412,6 @@ function GroupForm({
             ))}
           </div>
         </fieldset>
-        <details className="group-advanced">
-          <summary>
-            <ChevronDown size={15} aria-hidden="true" />
-            自定义配置
-            {(models.length > 0 || instruction.length > 0) && (
-              <Badge>已配置</Badge>
-            )}
-          </summary>
-          <div className="group-advanced-fields">
-            <div className="field">
-              <span className="field-label">
-                应用模型<span>{models.length} 个已选</span>
-              </span>
-              <div className="checkbox-list">
-                {choices.length ? (
-                  choices.map((model) => (
-                    <label className="check-option" key={model}>
-                      <input
-                        type="checkbox"
-                        checked={models.includes(model)}
-                        onChange={(event) =>
-                          setModels(
-                            event.target.checked
-                              ? [...models, model]
-                              : models.filter((item) => item !== model),
-                          )
-                        }
-                      />
-                      <span className="mono">{model}</span>
-                    </label>
-                  ))
-                ) : (
-                  <p className="field-hint">暂无模型，请添加模型 ID</p>
-                )}
-              </div>
-              <div className="inline-input">
-                <input
-                  aria-label="添加模型 ID"
-                  value={manualModel}
-                  onChange={(event) => setManualModel(event.target.value)}
-                  placeholder="自定义模型 ID"
-                />
-                <IconButton
-                  title="添加模型"
-                  disabled={!manualModel.trim()}
-                  onClick={() => {
-                    setModels([...new Set([...models, manualModel.trim()])]);
-                    setManualModel("");
-                  }}
-                >
-                  <Plus size={18} />
-                </IconButton>
-              </div>
-            </div>
-            <Field label="模型指令" optional>
-              <textarea
-                rows={6}
-                value={instruction}
-                onChange={(event) => setInstruction(event.target.value)}
-                placeholder="输入此分组的模型指令"
-              />
-            </Field>
-          </div>
-        </details>
       </ModalForm>
     </Modal>
   );
@@ -746,6 +654,14 @@ function AccountForm({
   const [models, setModels] = useState<string[]>(account?.models || []);
   const [available, setAvailable] = useState<string[]>(account?.models || []);
   const [manualModel, setManualModel] = useState("");
+  const [mappings, setMappings] = useState(
+    Object.entries(account?.model_mappings || {}).map(([request, actual], id) => ({
+      id,
+      request,
+      actual,
+    })),
+  );
+  const nextMappingId = useRef(mappings.length);
   const [groups, setGroups] = useState<string[]>(account?.group_ids || []);
   const [priority, setPriority] = useState(account?.priority ?? 0);
   const [rpm, setRpm] = useState(account?.rpm || 0);
@@ -754,6 +670,20 @@ function AccountForm({
   const [busy, setBusy] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [error, setError] = useState("");
+  function selectModels(selected: string[]) {
+    setModels(selected);
+    const affected = mappings.filter(
+      (mapping) => mapping.actual && !selected.includes(mapping.actual),
+    );
+    if (affected.length) {
+      setMappings((current) =>
+        current.map((mapping) =>
+          selected.includes(mapping.actual) ? mapping : { ...mapping, actual: "" },
+        ),
+      );
+      setError("模型映射的实际模型已取消勾选，请重新选择实际模型或删除该映射");
+    }
+  }
   async function discover() {
     setDiscovering(true);
     setError("");
@@ -785,6 +715,26 @@ function AccountForm({
       setError("至少选择一个分组");
       return;
     }
+    const aliases = new Set<string>();
+    for (const mapping of mappings) {
+      const request = mapping.request.trim();
+      if (!request || !mapping.actual) {
+        setError("请填写每条模型映射的请求模型，并选择实际模型");
+        return;
+      }
+      if (!models.includes(mapping.actual)) {
+        setError("模型映射的实际模型必须是已勾选的可用模型");
+        return;
+      }
+      if (aliases.has(request)) {
+        setError(`请求模型 ${request} 存在重复映射`);
+        return;
+      }
+      aliases.add(request);
+    }
+    const modelMappings = Object.fromEntries(
+      mappings.map((mapping) => [mapping.request.trim(), mapping.actual]),
+    );
     setBusy(true);
     setError("");
     try {
@@ -797,6 +747,7 @@ function AccountForm({
           api_key: secret,
           protocols,
           models,
+          model_mappings: modelMappings,
           group_ids: groups,
           priority,
           rpm,
@@ -907,11 +858,11 @@ function AccountForm({
           </div>
           {available.length > 0 && (
             <div className="model-select-tools">
-              <button type="button" onClick={() => setModels([...available])}>
+              <button type="button" onClick={() => selectModels([...available])}>
                 全选
               </button>
               <span>/</span>
-              <button type="button" onClick={() => setModels([])}>
+              <button type="button" onClick={() => selectModels([])}>
                 清空
               </button>
             </div>
@@ -924,7 +875,7 @@ function AccountForm({
                     type="checkbox"
                     checked={models.includes(model)}
                     onChange={(event) =>
-                      setModels(
+                      selectModels(
                         event.target.checked
                           ? [...models, model]
                           : models.filter((item) => item !== model),
@@ -944,6 +895,10 @@ function AccountForm({
               value={manualModel}
               onChange={(event) => setManualModel(event.target.value)}
               placeholder="手动添加模型 ID"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              maxLength={200}
             />
             <IconButton
               title="添加模型"
@@ -958,6 +913,96 @@ function AccountForm({
               <Plus size={18} />
             </IconButton>
           </div>
+          <fieldset
+            className="form-fieldset model-mapping-fieldset"
+            disabled={busy || discovering}
+          >
+            <legend>
+              模型映射<span>{mappings.length} 条</span>
+            </legend>
+            {mappings.length > 0 && (
+              <div className="model-mapping-list">
+                {mappings.map((mapping, index) => (
+                  <div className="model-mapping-row" key={mapping.id}>
+                    <Field label="请求模型">
+                      <input
+                        aria-label={`请求模型 ${index + 1}`}
+                        className="mono"
+                        value={mapping.request}
+                        onChange={(event) => {
+                          const request = event.target.value;
+                          setMappings((current) =>
+                            current.map((row) =>
+                              row.id === mapping.id ? { ...row, request } : row,
+                            ),
+                          );
+                        }}
+                        placeholder="例如：my-model"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        maxLength={200}
+                      />
+                    </Field>
+                    <ArrowRight
+                      className="model-mapping-arrow"
+                      size={16}
+                      aria-hidden="true"
+                    />
+                    <Field label="实际模型">
+                      <Select
+                        aria-label={`实际模型 ${index + 1}`}
+                        value={mapping.actual}
+                        onChange={(event) => {
+                          const actual = event.target.value;
+                          setMappings((current) =>
+                            current.map((row) =>
+                              row.id === mapping.id ? { ...row, actual } : row,
+                            ),
+                          );
+                        }}
+                      >
+                        <option value="" disabled>
+                          选择实际模型
+                        </option>
+                        {models.map((model) => (
+                          <option key={model} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <IconButton
+                      title={`删除模型映射 ${index + 1}`}
+                      className="destructive model-mapping-remove"
+                      onClick={() =>
+                        setMappings((current) =>
+                          current.filter((row) => row.id !== mapping.id),
+                        )
+                      }
+                    >
+                      <Trash2 size={16} />
+                    </IconButton>
+                  </div>
+                ))}
+              </div>
+            )}
+            <Button
+              type="button"
+              className="small-button model-mapping-add"
+              disabled={!models.length}
+              onClick={() => {
+                const id = nextMappingId.current++;
+                setMappings((current) => [
+                  ...current,
+                  { id, request: "", actual: "" },
+                ]);
+              }}
+            >
+              <Plus size={15} />
+              添加映射
+            </Button>
+          </fieldset>
         </div>
         <fieldset className="form-fieldset">
           <legend>所属分组</legend>

@@ -59,33 +59,35 @@ Existing installations must first pull this source version and run the Compose b
 
 ## Configure The Relay
 
-1. **Groups:** create a group and independently select strategies for `gpt-5.6-sol`, `gpt-6.1-sol`, and `gpt-6-astra`. Each selected model uses its own imported instruction profile; unselected models are forwarded unchanged. Multiple selections never concatenate different models' profiles. Existing unmodified preset groups are recognized automatically; custom exact-model instructions remain available under custom configuration. Referenced groups must be detached from accounts and keys before deletion.
-2. **Accounts:** enter an upstream endpoint and API key, discover/select models, enable `responses` and/or `compact`, and assign groups. Endpoint roots with or without `/v1` work. Set RPM and concurrency to `0` for unlimited. A blank secret when editing retains the existing secret.
+1. **Groups:** create a group and use `profile_ids` to independently select strategies for `gpt-5.6-sol`, `gpt-6.1-sol`, and `gpt-6-astra`. Apart from its name, a group configures only profile selections, not a custom model list or instructions. Profiles match the exact actual model after account mapping: each selected model uses only its own profile, while an unselected model receives no injected strategy. Multiple selections never concatenate different profiles. Existing unmodified preset groups are recognized automatically. Referenced groups must be detached from accounts and keys before deletion.
+2. **Accounts:** enter an upstream endpoint and API key, discover/select actual upstream models, enable `responses` and/or `compact`, and assign groups. Optional `model_mappings` maps requested model IDs to actual upstream model IDs; every target must be selected in the account's available models. Resolution is single-hop, never recursive; a request without a mapping uses the same model ID. Endpoint roots with or without `/v1` work. Set RPM and concurrency to `0` for unlimited. A blank secret when editing retains the existing secret.
 3. **API keys:** create a named client key for a group. Copy it immediately or reveal/copy it later in the authenticated console. Its group can be changed without rotating the key. Disabling/deleting the key blocks future requests. The displayed API base URL uses the current site origin plus `/v1`.
 4. **System settings:** set the console entry path, retry budget, failure threshold, cooldown, request timeout, and statistics retention. Changing a password requires the current password and matching new-password confirmation; it revokes all sessions. Confirmation is not TOTP or another independent authentication factor.
 
-Eligible upstream accounts must match the client's group, model, and protocol; accounts with no selected models do not receive requests. **Lower priority numbers are attempted first**; equal priorities use a stable account-ID order. Each client request uses at most `max_retries + 1` distinct upstream accounts. Transport failures, HTTP 401, 403, 408, 429, and HTTP 5xx permit failover before a response starts. An account enters cooldown once its consecutive retryable failure count reaches `failure_threshold`; after `cooldown_seconds` it becomes eligible again. Other 4xx responses are returned without failover. Active streaming responses are not replayed if they fail midway. RPM windows, concurrency counters, and cooldown state are process-local and reset on restart; run one instance per data volume.
+For example, the account configuration fragment `{"models":["gpt-6-astra"],"model_mappings":{"chat-main":"gpt-6-astra"}}` accepts a client request for `chat-main` and sends `model: "gpt-6-astra"` upstream. Selecting the group's `gpt-6-astra` strategy applies that actual model's profile, not a profile for the alias. An unmapped request for `gpt-6-astra` still uses that same actual model. These rules apply to both `responses` and `compact`.
+
+Eligible upstream accounts must match the client's group and protocol, and resolve the requested model to a selected actual model; accounts with no selected models do not receive requests. **Lower priority numbers are attempted first**; equal priorities use a stable account-ID order. Each client request uses at most `max_retries + 1` distinct upstream accounts. Every attempt starts from the original client request, applies that account's single-hop mapping, and then selects the group profile for its actual model. Failover resolves each account independently and never carries over or stacks a previous attempt's strategy. Transport failures, HTTP 401, 403, 408, 429, and HTTP 5xx permit failover before a response starts. An account enters cooldown once its consecutive retryable failure count reaches `failure_threshold`; after `cooldown_seconds` it becomes eligible again. Other 4xx responses are returned without failover. Active streaming responses are not replayed if they fail midway. RPM windows, concurrency counters, and cooldown state are process-local and reset on restart; run one instance per data volume.
 
 The security entry moves the console from `/` to `/<entry>` while leaving `/health` and `/v1/*` unchanged. It supplements the login, not an independent authentication factor. Save the new URL before leaving the page.
 
 ## Client API
 
-Supported endpoints are `GET /v1/models`, `POST /v1/responses`, and `POST /v1/responses/compact`. Authentication uses a generated proxy key, not your administrator password or upstream key. This project does not expose a Chat Completions compatibility route.
+Supported endpoints are `GET /v1/models`, `POST /v1/responses`, and `POST /v1/responses/compact`. `/v1/models` includes selected actual models and valid requested-model aliases from accounts in the key's group. Authentication uses a generated proxy key, not your administrator password or upstream key. This project does not expose a Chat Completions compatibility route.
 
 ```sh
 export ZAKO_API_KEY='YOUR_GENERATED_PROXY_KEY'
 curl http://localhost:1990/v1/responses \
   -H "Authorization: Bearer $ZAKO_API_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"YOUR_UPSTREAM_MODEL_ID","input":"Hello"}'
+  -d '{"model":"YOUR_REQUEST_MODEL_ID","input":"Hello"}'
 
 curl -N http://localhost:1990/v1/responses \
   -H "Authorization: Bearer $ZAKO_API_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"YOUR_UPSTREAM_MODEL_ID","input":"Hello","stream":true}'
+  -d '{"model":"YOUR_REQUEST_MODEL_ID","input":"Hello","stream":true}'
 ```
 
-For compaction, send a valid upstream compact request to `/v1/responses/compact`; support depends on the account's upstream provider. Responses JSON fields pass through, except that a selected group profile prepends its configured text to the request's `instructions` field. Existing instructions and other request fields are preserved. SSE events pass through while usage and completion status are observed; credential reflection is redacted. Provider behavior and model refusals remain controlled by the upstream service; a profile is not a guarantee of changed behavior.
+`YOUR_REQUEST_MODEL_ID` may be a selected actual model ID or a requested-model alias configured on an account. For compaction, send a valid upstream compact request to `/v1/responses/compact`; support depends on the account's upstream provider. Both protocols first replace the request's `model` with the actual model resolved for the current account. If the group selects a profile for that exact actual model, its text is prepended to `instructions`; otherwise no strategy is injected. Existing client instructions and other request fields are preserved. SSE events pass through while usage and completion status are observed; credential reflection is redacted. Provider behavior and model refusals remain controlled by the upstream service; a profile is not a guarantee of changed behavior.
 
 ## Statistics And Storage
 

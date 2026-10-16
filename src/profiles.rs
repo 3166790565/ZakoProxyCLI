@@ -51,51 +51,22 @@ pub fn find(id: &str) -> Option<&'static Profile> {
     all().iter().find(|profile| profile.id == id)
 }
 
-// Only the exact old preset representation is migrated; custom text stays untouched.
-pub(crate) fn normalize_legacy_group(group: &mut Group) {
-    if !group.profile_ids.is_empty() {
-        return;
-    }
-    if let Some(profile) = all().iter().find(|profile| {
-        group.instruction == profile.instruction
-            && group.models.len() == profile.models.len()
-            && group
-                .models
-                .iter()
-                .all(|model| profile.models.contains(model))
-    }) {
-        group.profile_ids.push(profile.id.clone());
-        group.models.clear();
-        group.instruction.clear();
-    }
+// Only exact historical presets migrate; discarded custom fields never become active.
+pub(crate) fn legacy_profile(models: &[String], instruction: &str) -> Option<&'static Profile> {
+    all().iter().find(|profile| {
+        instruction == profile.instruction
+            && models.len() == profile.models.len()
+            && models.iter().all(|model| profile.models.contains(model))
+    })
 }
 
-pub fn instruction<'a>(group: &'a Group, model: &str) -> Option<&'a str> {
-    if let Some(profile) = group
+pub fn instruction(group: &Group, model: &str) -> Option<&'static str> {
+    group
         .profile_ids
         .iter()
         .filter_map(|id| find(id))
         .find(|profile| profile.models.iter().any(|selected| selected == model))
-    {
-        return Some(&profile.instruction);
-    }
-    if group.instruction.is_empty() || !group.models.iter().any(|selected| selected == model) {
-        return None;
-    }
-    if all()
-        .iter()
-        .any(|profile| profile.models.iter().any(|supported| supported == model))
-    {
-        return None;
-    }
-    // Built-in text is enabled only through profile_ids, never through a stale legacy copy.
-    if all()
-        .iter()
-        .any(|profile| profile.instruction == group.instruction)
-    {
-        return None;
-    }
-    Some(&group.instruction)
+        .map(|profile| profile.instruction.as_str())
 }
 
 #[cfg(test)]
@@ -125,32 +96,24 @@ mod tests {
     #[test]
     fn legacy_migration_only_recognizes_unchanged_presets() {
         for profile in all() {
-            let mut group = Group {
-                models: profile.models.clone(),
-                instruction: profile.instruction.clone(),
-                ..Default::default()
-            };
-            normalize_legacy_group(&mut group);
+            let group: Group = serde_json::from_value(serde_json::json!({
+                "name":"Legacy", "models":profile.models, "instruction":profile.instruction
+            }))
+            .unwrap();
             assert_eq!(
                 group.profile_ids.as_slice(),
                 std::slice::from_ref(&profile.id)
             );
-            assert!(group.models.is_empty());
-            assert!(group.instruction.is_empty());
+            let serialized = serde_json::to_value(&group).unwrap();
+            assert!(serialized.get("models").is_none());
+            assert!(serialized.get("instruction").is_none());
 
-            let mut custom = Group {
-                models: vec!["custom-model".into()],
-                instruction: profile.instruction.clone(),
-                ..Default::default()
-            };
-            normalize_legacy_group(&mut custom);
+            let custom: Group = serde_json::from_value(serde_json::json!({
+                "name":"Custom", "models":["custom-model"], "instruction":"Custom text"
+            }))
+            .unwrap();
             assert!(custom.profile_ids.is_empty());
             assert!(instruction(&custom, "custom-model").is_none());
-            custom.instruction.push_str(" custom");
-            assert_eq!(
-                instruction(&custom, "custom-model"),
-                Some(custom.instruction.as_str())
-            );
         }
     }
 }

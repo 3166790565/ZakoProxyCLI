@@ -1609,7 +1609,10 @@ mod tests {
                 json!({"tag":"v0.3.0","url":"https://evil.invalid"}),
                 StatusCode::UNPROCESSABLE_ENTITY,
             ),
-            (json!({"tag":"v0.3.0"}), StatusCode::CONFLICT),
+            (
+                json!({"tag":format!("v{}", env!("CARGO_PKG_VERSION"))}),
+                StatusCode::CONFLICT,
+            ),
         ] {
             let response = agent_app(agent.clone())
                 .oneshot(

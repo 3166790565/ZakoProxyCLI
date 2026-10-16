@@ -107,7 +107,14 @@ pub async fn models(State(state): State<Shared>, headers: HeaderMap) -> Response
         .accounts
         .iter()
         .filter(|account| account.enabled && account.group_ids.contains(&group.id))
-        .flat_map(|account| account.models.iter().cloned())
+        .flat_map(|account| {
+            account
+                .models
+                .iter()
+                .chain(account.model_mappings.keys())
+                .filter(|requested| account.actual_model(requested).is_some())
+                .cloned()
+        })
         .collect();
     Json(json!({"object":"list", "data":models.into_iter().map(|id| json!({"id":id,"object":"model","owned_by":"upstream"})).collect::<Vec<_>>()})).into_response()
 }
@@ -232,7 +239,7 @@ impl Drop for LogGuard {
     }
 }
 
-async fn forward(state: Shared, headers: HeaderMap, mut body: Value, protocol: &str) -> Response {
+async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str) -> Response {
     let (config, key, group) = match authorize(&state, &headers) {
         Ok(value) => value,
         Err((status, message)) => return error(status, message),
@@ -256,10 +263,6 @@ async fn forward(state: Shared, headers: HeaderMap, mut body: Value, protocol: &
             "A JSON object with a nonempty model is required",
         );
     }
-    if let Err(message) = apply_instruction(&mut body, &group, &model) {
-        log.entry.status = 400;
-        return error(StatusCode::BAD_REQUEST, message);
-    }
     let mut accounts: Vec<_> = config
         .accounts
         .iter()
@@ -267,7 +270,7 @@ async fn forward(state: Shared, headers: HeaderMap, mut body: Value, protocol: &
             account.enabled
                 && account.group_ids.contains(&group.id)
                 && account.protocols.iter().any(|item| item == protocol)
-                && account.models.contains(&model)
+                && account.actual_model(&model).is_some()
         })
         .cloned()
         .collect();
@@ -300,6 +303,14 @@ async fn forward(state: Shared, headers: HeaderMap, mut body: Value, protocol: &
                 .insert("retry-after", HeaderValue::from_static("1"));
             return response;
         };
+        let actual_model = account.actual_model(&model).unwrap();
+        // Rebuild each attempt from the original request: account mappings can differ on failover.
+        let mut upstream_body = body.clone();
+        upstream_body["model"] = json!(actual_model);
+        if let Err(message) = apply_instruction(&mut upstream_body, &group, actual_model) {
+            log.entry.status = 400;
+            return error(StatusCode::BAD_REQUEST, message);
+        }
         tried.insert(account.id.clone());
         log.entry.attempts += 1;
         log.entry.account_id = account.id.clone();
@@ -329,7 +340,7 @@ async fn forward(state: Shared, headers: HeaderMap, mut body: Value, protocol: &
             .client
             .post(url)
             .bearer_auth(&secret)
-            .json(&body)
+            .json(&upstream_body)
             .timeout(Duration::from_secs(u64::from(
                 config.settings.request_timeout_seconds.max(1),
             )));
@@ -659,21 +670,26 @@ mod tests {
     }
     #[test]
     fn instruction_changes_only_selected_model_and_preserves_fields() {
+        let profile = &profiles::all()[0];
         let group = Group {
-            models: vec!["selected".into()],
-            instruction: "Configured instruction".into(),
+            profile_ids: vec![profile.id.clone()],
             ..Default::default()
         };
         let original = json!({"model":"other","instructions":"Existing","input":[{"role":"user","content":"hello"}],"tools":[{"type":"function"}],"store":false});
         let mut body = original.clone();
         apply_instruction(&mut body, &group, "other").unwrap();
         assert_eq!(body, original);
-        apply_instruction(&mut body, &group, "selected").unwrap();
-        assert_eq!(body["instructions"], "Configured instruction\n\nExisting");
+        apply_instruction(&mut body, &group, &profile.models[0]).unwrap();
+        assert_eq!(
+            body["instructions"],
+            format!("{}\n\nExisting", profile.instruction)
+        );
         assert_eq!(body["input"], original["input"]);
         assert_eq!(body["tools"], original["tools"]);
         assert_eq!(body["store"], original["store"]);
-        assert!(apply_instruction(&mut json!({"instructions":[]}), &group, "selected").is_err());
+        assert!(
+            apply_instruction(&mut json!({"instructions":[]}), &group, &profile.models[0]).is_err()
+        );
     }
     #[test]
     fn selected_profiles_apply_one_matching_model_and_preserve_fields() {
@@ -682,8 +698,6 @@ mod tests {
                 .iter()
                 .map(|profile| profile.id.clone())
                 .collect(),
-            models: vec!["gpt-6-astra".into(), "custom".into()],
-            instruction: "Custom fallback".into(),
             ..Default::default()
         };
         for model in ["gpt-5.6-sol", "gpt-6-astra", "gpt-6.1-sol"] {
@@ -717,7 +731,7 @@ mod tests {
         }
         let mut custom = json!({"instructions":"Existing"});
         apply_instruction(&mut custom, &group, "custom").unwrap();
-        assert_eq!(custom["instructions"], "Custom fallback\n\nExisting");
+        assert_eq!(custom["instructions"], "Existing");
     }
     #[test]
     fn unselected_profiles_never_leak_through_legacy_builtin_text() {
@@ -725,12 +739,11 @@ mod tests {
             .iter()
             .find(|profile| profile.model_family == "gpt-6")
             .unwrap();
-        let group = Group {
-            profile_ids: vec![six.id.clone()],
-            models: vec!["gpt-5.6-sol".into(), "gpt-6.1-sol".into()],
-            instruction: six.instruction.clone(),
-            ..Default::default()
-        };
+        let group: Group = serde_json::from_value(json!({
+            "name":"Only six", "profile_ids":[six.id],
+            "models":["gpt-5.6-sol", "gpt-6.1-sol"], "instruction":six.instruction
+        }))
+        .unwrap();
         for model in ["gpt-5.6-sol", "gpt-6.1-sol"] {
             let original = json!({"model":model,"input":"hello","instructions":"Keep me"});
             let mut body = original.clone();
@@ -744,11 +757,11 @@ mod tests {
         apply_instruction(&mut empty, &group, "gpt-6-astra").unwrap();
         assert_eq!(empty["instructions"], six.instruction);
         assert!(apply_instruction(&mut json!({"instructions":[]}), &group, "gpt-6-astra").is_err());
-        let legacy_custom = Group {
-            models: vec!["gpt-6.1-sol".into()],
-            instruction: "Old custom text must not bypass the unchecked model".into(),
-            ..Default::default()
-        };
+        let legacy_custom: Group = serde_json::from_value(json!({
+            "name":"Custom", "models":["gpt-6.1-sol"],
+            "instruction":"Old custom text must not bypass the unchecked model"
+        }))
+        .unwrap();
         let mut unchecked = json!({"instructions":"Existing"});
         apply_instruction(&mut unchecked, &legacy_custom, "gpt-6.1-sol").unwrap();
         assert_eq!(unchecked["instructions"], "Existing");
@@ -849,8 +862,6 @@ mod tests {
             .update(|config| {
                 config.groups.push(Group {
                     id: "group".into(),
-                    models: vec!["chosen".into()],
-                    instruction: "Configured instruction".into(),
                     ..Default::default()
                 });
                 config.keys.push(ApiKey {
@@ -901,6 +912,9 @@ mod tests {
             .store
             .update(|config| {
                 config.accounts[0].models.clear();
+                config.accounts[0]
+                    .model_mappings
+                    .insert("chosen".into(), "unselected".into());
                 Ok(())
             })
             .unwrap();
@@ -912,6 +926,70 @@ mod tests {
         .await;
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert!(state.runtime.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mapped_failover_rebuilds_actual_model_and_instruction_for_each_account() {
+        use axum::routing::post;
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_first = captured.clone();
+        let (first, _first_server) = serve(axum::Router::new().route(
+            "/v1/responses/compact",
+            post(move |Json(body): Json<Value>| {
+                observed_first.lock().unwrap().push(body);
+                async { StatusCode::SERVICE_UNAVAILABLE }
+            }),
+        ))
+        .await;
+        let observed_second = captured.clone();
+        let (second, _second_server) = serve(axum::Router::new().route(
+            "/v1/responses/compact",
+            post(move |Json(body): Json<Value>| {
+                observed_second.lock().unwrap().push(body);
+                async { Json(json!({"id":"success"})) }
+            }),
+        ))
+        .await;
+        let (_dir, state) = fixture(&[first, second]);
+        state
+            .store
+            .update(|config| {
+                config.groups[0].profile_ids =
+                    profiles::all().iter().map(|p| p.id.clone()).collect();
+                for (account, actual) in config
+                    .accounts
+                    .iter_mut()
+                    .zip(["gpt-5.6-sol", "gpt-6-astra"])
+                {
+                    account.models = vec![actual.into()];
+                    account
+                        .model_mappings
+                        .insert("chosen".into(), actual.into());
+                }
+                Ok(())
+            })
+            .unwrap();
+        let original = json!({"model":"chosen","instructions":"Original","input":"hello","tools":[],"metadata":{"keep":true}});
+        let response = call(state.clone(), "/v1/responses/compact", original.clone()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let captured = captured.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+        for (body, actual) in captured.iter().zip(["gpt-5.6-sol", "gpt-6-astra"]) {
+            let profile = profiles::all()
+                .iter()
+                .find(|p| p.models.contains(&actual.to_owned()))
+                .unwrap();
+            let mut expected = original.clone();
+            expected["model"] = json!(actual);
+            expected["instructions"] = json!(format!("{}\n\nOriginal", profile.instruction));
+            assert_eq!(*body, expected);
+        }
+        let logs = state.store.logs(0, store::now() + 10).unwrap();
+        assert_eq!(logs[0].model, "chosen");
+        assert_eq!(logs[0].attempts, 2);
     }
 
     #[tokio::test]
@@ -945,10 +1023,7 @@ mod tests {
         );
         let captured = received.lock().unwrap().clone().unwrap();
         assert_eq!(captured.0, "/v1/responses/compact");
-        assert_eq!(
-            captured.1["instructions"],
-            "Configured instruction\n\nExisting"
-        );
+        assert_eq!(captured.1["instructions"], "Existing");
         for field in ["input", "tools", "metadata", "store"] {
             assert_eq!(captured.1[field], input[field]);
         }

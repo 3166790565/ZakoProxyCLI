@@ -53,8 +53,6 @@ export type Group = {
   id: string;
   name: string;
   profile_ids: string[];
-  models: string[];
-  instruction: string;
 };
 export type Account = {
   id: string;
@@ -62,6 +60,7 @@ export type Account = {
   endpoint: string;
   protocols: string[];
   models: string[];
+  model_mappings: Record<string, string>;
   group_ids: string[];
   priority: number;
   rpm: number;

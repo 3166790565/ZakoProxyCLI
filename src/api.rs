@@ -228,7 +228,7 @@ fn save_group_impl(
 ) -> ApiResult<Value> {
     auth(s, h)?;
     name(&g.name)?;
-    if g.instruction.len() > 256 * 1024 || g.models.len() > 200 || g.profile_ids.len() > 16 {
+    if g.profile_ids.len() > 16 {
         return Err(bad("Group configuration is too large"));
     }
     if g.profile_ids.iter().any(|id| profiles::find(id).is_none()) {
@@ -318,9 +318,28 @@ fn save_account_impl(
     {
         return Err(bad("Select responses or compact protocol"));
     }
-    if a.api_key.len() > 4096 || a.models.len() > 500 {
+    if a.api_key.len() > 4096 || a.models.len() > 500 || a.model_mappings.len() > 500 {
         return Err(bad("Account configuration is too large"));
     }
+    let valid_model = |model: &str| {
+        !model.is_empty()
+            && model.len() <= 256
+            && !model
+                .chars()
+                .any(|ch| ch.is_whitespace() || ch.is_control())
+    };
+    if a.models.iter().any(|model| !valid_model(model))
+        || a.model_mappings.iter().any(|(requested, actual)| {
+            !valid_model(requested) || !valid_model(actual) || !a.models.contains(actual)
+        })
+    {
+        return Err(bad(
+            "Model IDs must contain 1 to 256 bytes without whitespace; mapping targets must be selected available models",
+        ));
+    }
+    let mut selected_models = std::collections::HashSet::new();
+    a.models
+        .retain(|model| selected_models.insert(model.clone()));
     a.id = path.clone().unwrap_or_else(id);
     if !a.api_key.is_empty() {
         a.api_key = s.store.seal(&a.api_key)?;

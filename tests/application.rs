@@ -348,12 +348,7 @@ async fn routing_failover_compact_streaming_and_statistics() {
             .unwrap()
             .contains("Original.")
     );
-    assert!(
-        output["instructions"]
-            .as_str()
-            .unwrap()
-            .contains("Be concise.")
-    );
+    assert_eq!(output["instructions"], "Original.");
     assert_eq!(
         proxy_request(
             &s,
@@ -602,7 +597,7 @@ async fn profile_selections_validate_edit_and_persist_across_restart() {
 }
 
 #[tokio::test]
-async fn old_groups_migrate_only_exact_presets_and_preserve_custom_fields() {
+async fn old_groups_migrate_only_exact_presets_and_discard_custom_fields() {
     let (dir, s) = fixture();
     let cookie = setup(&s).await;
     let profile = &profiles::all()[1];
@@ -622,14 +617,12 @@ async fn old_groups_migrate_only_exact_presets_and_preserve_custom_fields() {
     let (status, groups, _) = request(&s, "GET", "/api/groups", Value::Null, &cookie, "/").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(groups[0]["profile_ids"], json!([profile.id]));
-    assert_eq!(groups[0]["models"], json!([]));
-    assert_eq!(groups[0]["instruction"], "");
     assert_eq!(groups[1]["profile_ids"], json!([]));
-    assert_eq!(groups[1]["models"], json!(["custom-model"]));
-    assert_eq!(groups[1]["instruction"], "Custom instruction");
     assert_eq!(groups[2]["profile_ids"], json!([]));
-    assert_eq!(groups[2]["models"], json!(profile.models));
-    assert_eq!(groups[2]["instruction"], profile.instruction);
+    for group in groups.as_array().unwrap() {
+        assert!(group.get("models").is_none());
+        assert!(group.get("instruction").is_none());
+    }
     let (status, cleared, _) = request(
         &s,
         "PUT",
@@ -644,11 +637,17 @@ async fn old_groups_migrate_only_exact_presets_and_preserve_custom_fields() {
     drop(s);
     let s = new_app(dir.path(), dir.path().join("web")).unwrap();
     assert!(s.store.config().unwrap().groups[0].profile_ids.is_empty());
-    assert_eq!(
-        s.store.config().unwrap().groups[1].instruction,
-        "Custom instruction"
-    );
+    assert!(s.store.config().unwrap().groups[1].profile_ids.is_empty());
     assert!(s.store.config().unwrap().groups[2].profile_ids.is_empty());
+    let db = rusqlite::Connection::open(dir.path().join("zako.db")).unwrap();
+    let saved: String = db
+        .query_row("SELECT value FROM config WHERE id=1", [], |row| row.get(0))
+        .unwrap();
+    let saved: Value = serde_json::from_str(&saved).unwrap();
+    for group in saved["groups"].as_array().unwrap() {
+        assert!(group.get("models").is_none());
+        assert!(group.get("instruction").is_none());
+    }
 }
 
 #[tokio::test]
@@ -677,8 +676,8 @@ async fn explicit_empty_profiles_preserve_deselection_with_stale_legacy_fields()
         ).await;
         assert_eq!(status, StatusCode::OK, "{cleared}");
         assert_eq!(cleared["profile_ids"], json!([]));
-        assert_eq!(cleared["models"], json!(profile.models));
-        assert_eq!(cleared["instruction"], profile.instruction);
+        assert!(cleared.get("models").is_none());
+        assert!(cleared.get("instruction").is_none());
     }
     drop(s);
     let s = new_app(dir.path(), dir.path().join("web")).unwrap();
@@ -687,8 +686,6 @@ async fn explicit_empty_profiles_preserve_deselection_with_stale_legacy_fields()
     assert_eq!(groups.as_array().unwrap().len(), profiles::all().len());
     for (group, profile) in s.store.config().unwrap().groups.iter().zip(profiles::all()) {
         assert!(group.profile_ids.is_empty());
-        assert_eq!(group.models, profile.models);
-        assert_eq!(group.instruction, profile.instruction);
         assert!(profiles::instruction(group, &profile.models[0]).is_none());
     }
 }
@@ -751,9 +748,7 @@ async fn selected_profiles_route_both_protocols_without_cross_model_injection() 
                 String::from_utf8_lossy(&bytes)
             );
             let mut output: Value = serde_json::from_slice(&bytes).unwrap();
-            let expected = if model == "custom-model" {
-                "Custom fallback\n\nOriginal instructions".into()
-            } else if let Some(profile) = profiles::all()
+            let expected = if let Some(profile) = profiles::all()
                 .iter()
                 .find(|profile| profile.models.iter().any(|selected| selected == model))
             {
@@ -788,5 +783,319 @@ async fn selected_profiles_route_both_protocols_without_cross_model_injection() 
             assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), original);
         }
     }
+    task.abort();
+}
+
+#[tokio::test]
+async fn account_model_mappings_validate_and_persist_with_selected_targets() {
+    let (dir, s) = fixture();
+    let cookie = setup(&s).await;
+    let invalid = [
+        json!({"public":"unselected"}),
+        json!({"":"actual"}),
+        json!({" public":"actual"}),
+        json!({"public ":"actual"}),
+        json!({"public\nname":"actual"}),
+        json!({"public":"actual "}),
+        json!({"x".repeat(257):"actual"}),
+        Value::Null,
+        json!([]),
+        json!({"public":null}),
+        json!(
+            (0..501)
+                .map(|n| (format!("alias-{n}"), "actual"))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        ),
+    ];
+    for mappings in invalid {
+        let (status, body, _) = request(
+            &s,
+            "POST",
+            "/api/accounts",
+            json!({
+                "name":"Invalid", "endpoint":"https://example.com", "api_key":"secret",
+                "models":["actual"], "model_mappings":mappings
+            }),
+            &cookie,
+            "/",
+        )
+        .await;
+        assert!(status.is_client_error(), "{mappings}: {status} {body}");
+    }
+    for models in [json!([""]), json!([" actual"]), json!(["actual\n"])] {
+        assert_eq!(request(&s, "POST", "/api/accounts", json!({
+            "name":"Invalid", "endpoint":"https://example.com", "api_key":"secret", "models":models
+        }), &cookie, "/").await.0, StatusCode::BAD_REQUEST);
+    }
+    let mappings = json!({"public":"actual", "second-alias":"actual"});
+    let (status, created, _) = request(
+        &s,
+        "POST",
+        "/api/accounts",
+        json!({
+            "name":"Mapped", "endpoint":"https://example.com", "api_key":"secret",
+            "models":["actual"], "model_mappings":mappings
+        }),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    assert_eq!(created["model_mappings"], mappings);
+    let id = created["id"].as_str().unwrap();
+    assert_eq!(request(&s, "PUT", &format!("/api/accounts/{id}"), json!({
+        "name":"Bad target edit", "endpoint":"https://example.com", "models":[], "model_mappings":mappings
+    }), &cookie, "/").await.0, StatusCode::BAD_REQUEST);
+    let replacement = json!({"replacement":"different"});
+    let (status, updated, _) = request(
+        &s,
+        "PUT",
+        &format!("/api/accounts/{id}"),
+        json!({
+            "name":"Updated mapping", "endpoint":"https://example.com",
+            "models":["actual", "different"], "model_mappings":replacement
+        }),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(updated["model_mappings"], replacement);
+    assert!(updated.get("api_key").is_none());
+    let account = &s.store.config().unwrap().accounts[0];
+    assert_eq!(s.store.unseal(&account.api_key).unwrap(), "secret");
+    assert_eq!(account.actual_model("public"), None);
+    assert_eq!(account.actual_model("replacement"), Some("different"));
+    drop(s);
+    let s = new_app(dir.path(), dir.path().join("web")).unwrap();
+    let (status, accounts, _) =
+        request(&s, "GET", "/api/accounts", Value::Null, &cookie, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(accounts[0]["model_mappings"], replacement);
+    assert_eq!(accounts[0]["models"], json!(["actual", "different"]));
+    assert!(accounts[0].get("api_key").is_none());
+    assert_eq!(
+        s.store
+            .unseal(&s.store.config().unwrap().accounts[0].api_key)
+            .unwrap(),
+        "secret"
+    );
+    let (status, cleared, _) = request(
+        &s,
+        "PUT",
+        &format!("/api/accounts/{id}"),
+        json!({
+            "name":"Cleared mappings", "endpoint":"https://example.com", "api_key":"",
+            "models":["actual", "different"], "model_mappings":{}
+        }),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(cleared["model_mappings"], json!({}));
+    assert!(cleared.get("api_key").is_none());
+    let account = &s.store.config().unwrap().accounts[0];
+    assert!(account.model_mappings.is_empty());
+    assert_eq!(account.actual_model("replacement"), None);
+    assert_eq!(account.actual_model("different"), Some("different"));
+    assert_eq!(s.store.unseal(&account.api_key).unwrap(), "secret");
+    let mut config = serde_json::to_value(s.store.config().unwrap()).unwrap();
+    config["accounts"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("model_mappings");
+    let db = rusqlite::Connection::open(dir.path().join("zako.db")).unwrap();
+    db.execute(
+        "UPDATE config SET value=?1 WHERE id=1",
+        [config.to_string()],
+    )
+    .unwrap();
+    assert!(
+        s.store.config().unwrap().accounts[0]
+            .model_mappings
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn mapped_models_apply_actual_strategy_and_advertise_valid_aliases() {
+    let (_dir, s) = fixture();
+    let cookie = setup(&s).await;
+    let router = Router::new()
+        .route(
+            "/v1/responses",
+            post(|axum::Json(body): axum::Json<Value>| async move { axum::Json(body) }),
+        )
+        .route(
+            "/v1/responses/compact",
+            post(|axum::Json(body): axum::Json<Value>| async move { axum::Json(body) }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let ids: Vec<_> = profiles::all().iter().map(|profile| &profile.id).collect();
+    let (status, group, _) = request(
+        &s,
+        "POST",
+        "/api/groups",
+        json!({"name":"Mapped strategies", "profile_ids":ids}),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let gid = group["id"].as_str().unwrap();
+    let (status, account, _) = request(&s, "POST", "/api/accounts", json!({
+        "name":"Mapped upstream", "endpoint":endpoint, "api_key":"upstream-secret", "group_ids":[gid],
+        "models":["gpt-5.6-sol", "gpt-6-astra", "gpt-6.1-sol", "plain"],
+        "model_mappings":{"public":"gpt-5.6-sol", "gpt-6-astra":"gpt-6.1-sol", "chain-start":"gpt-6-astra", "plain-alias":"plain"}
+    }), &cookie, "/").await;
+    assert_eq!(status, StatusCode::OK, "{account}");
+    let (_, key, _) = request(
+        &s,
+        "POST",
+        "/api/keys",
+        json!({"name":"Mapped key", "group_id":gid}),
+        &cookie,
+        "/",
+    )
+    .await;
+    let key = key["key"].as_str().unwrap();
+    for path in ["/v1/responses", "/v1/responses/compact"] {
+        for (requested, actual) in [
+            ("public", "gpt-5.6-sol"),
+            ("gpt-6-astra", "gpt-6.1-sol"),
+            ("chain-start", "gpt-6-astra"),
+            ("plain-alias", "plain"),
+            ("gpt-5.6-sol", "gpt-5.6-sol"),
+        ] {
+            let original = json!({"model":requested, "instructions":"Original", "input":"hello", "metadata":{"preserved":true}, "tools":[], "store":false});
+            let (status, bytes) = proxy_request(&s, path, key, original.clone()).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{path} {requested}: {}",
+                String::from_utf8_lossy(&bytes)
+            );
+            let output: Value = serde_json::from_slice(&bytes).unwrap();
+            let mut expected = original;
+            expected["model"] = json!(actual);
+            if let Some(profile) = profiles::all()
+                .iter()
+                .find(|profile| profile.models.iter().any(|model| model == actual))
+            {
+                expected["instructions"] = json!(format!("{}\n\nOriginal", profile.instruction));
+            }
+            assert_eq!(output, expected, "{path} {requested} -> {actual}");
+        }
+    }
+    let six = profiles::all()
+        .iter()
+        .find(|profile| profile.models.iter().any(|model| model == "gpt-6-astra"))
+        .unwrap();
+    assert_eq!(
+        request(
+            &s,
+            "PUT",
+            &format!("/api/groups/{gid}"),
+            json!({"name":"Only six", "profile_ids":[six.id]}),
+            &cookie,
+            "/"
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    for path in ["/v1/responses", "/v1/responses/compact"] {
+        let (status, bytes) = proxy_request(
+            &s,
+            path,
+            key,
+            json!({"model":"gpt-6-astra", "instructions":"Keep me", "input":"hello"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            json!({"model":"gpt-6.1-sol", "instructions":"Keep me", "input":"hello"})
+        );
+    }
+    s.store
+        .update(|config| {
+            let source = config.accounts[0].clone();
+            let mut disabled = source.clone();
+            disabled.id = "disabled".into();
+            disabled.enabled = false;
+            disabled.models = vec!["disabled-actual".into()];
+            disabled.model_mappings = std::collections::BTreeMap::from([(
+                "disabled-alias".into(),
+                "disabled-actual".into(),
+            )]);
+            config.accounts.push(disabled);
+            let mut outside = source;
+            outside.id = "outside".into();
+            outside.group_ids.clear();
+            outside.models = vec!["outside-actual".into()];
+            outside.model_mappings = std::collections::BTreeMap::from([(
+                "outside-alias".into(),
+                "outside-actual".into(),
+            )]);
+            config.accounts.push(outside);
+            config.accounts[0]
+                .model_mappings
+                .insert("invalid-alias".into(), "unselected".into());
+            config.accounts[0]
+                .model_mappings
+                .insert("plain".into(), "unselected".into());
+            Ok(())
+        })
+        .unwrap();
+    let response = app(s.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("authorization", format!("Bearer {key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let models: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    let names: std::collections::BTreeSet<_> = models["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        std::collections::BTreeSet::from([
+            "gpt-5.6-sol",
+            "gpt-6-astra",
+            "gpt-6.1-sol",
+            "public",
+            "chain-start",
+            "plain-alias"
+        ])
+    );
+    let (status, _) = proxy_request(
+        &s,
+        "/v1/responses",
+        key,
+        json!({"model":"invalid-alias", "input":"hello"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let (status, _) = proxy_request(
+        &s,
+        "/v1/responses",
+        key,
+        json!({"model":"plain", "input":"hello"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     task.abort();
 }

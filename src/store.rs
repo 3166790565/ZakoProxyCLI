@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::{path::Path, sync::Mutex};
+use std::{collections::BTreeMap, path::Path, sync::Mutex};
 
 pub type Result<T> = std::result::Result<T, String>;
 pub fn now() -> i64 {
@@ -31,10 +31,6 @@ pub struct Group {
     pub name: String,
     #[serde(default)]
     pub profile_ids: Vec<String>,
-    #[serde(default)]
-    pub models: Vec<String>,
-    #[serde(default)]
-    pub instruction: String,
 }
 
 #[derive(Deserialize)]
@@ -61,18 +57,16 @@ where
 
 impl From<GroupInput> for Group {
     fn from(input: GroupInput) -> Self {
-        let legacy = input.profile_ids.is_none();
-        let mut group = Self {
+        let profile_ids = input.profile_ids.unwrap_or_else(|| {
+            crate::profiles::legacy_profile(&input.models, &input.instruction)
+                .map(|profile| vec![profile.id.clone()])
+                .unwrap_or_default()
+        });
+        Self {
             id: input.id,
             name: input.name,
-            profile_ids: input.profile_ids.unwrap_or_default(),
-            models: input.models,
-            instruction: input.instruction,
-        };
-        if legacy {
-            crate::profiles::normalize_legacy_group(&mut group);
+            profile_ids,
         }
-        group
     }
 }
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -86,6 +80,8 @@ pub struct Account {
     #[serde(default)]
     pub models: Vec<String>,
     #[serde(default)]
+    pub model_mappings: BTreeMap<String, String>,
+    #[serde(default)]
     pub group_ids: Vec<String>,
     #[serde(default)]
     pub rpm: u32,
@@ -97,6 +93,19 @@ pub struct Account {
     pub enabled: bool,
     #[serde(default = "protocols")]
     pub protocols: Vec<String>,
+}
+impl Account {
+    pub fn actual_model<'a>(&'a self, requested: &'a str) -> Option<&'a str> {
+        let actual = self
+            .model_mappings
+            .get(requested)
+            .map(String::as_str)
+            .unwrap_or(requested);
+        self.models
+            .iter()
+            .any(|model| model == actual)
+            .then_some(actual)
+    }
 }
 fn enabled() -> bool {
     true
@@ -394,6 +403,28 @@ pub fn usage(value: &Value) -> Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn model_mappings_default_empty_and_resolve_only_once_with_allowlist() {
+        let mut account: Account = serde_json::from_value(serde_json::json!({
+            "name":"Legacy", "endpoint":"https://example.com", "models":["actual", "alias"]
+        }))
+        .unwrap();
+        assert!(account.model_mappings.is_empty());
+        assert_eq!(account.actual_model("actual"), Some("actual"));
+        account.model_mappings = BTreeMap::from([
+            ("public".into(), "alias".into()),
+            ("alias".into(), "actual".into()),
+            ("another".into(), "actual".into()),
+            ("invalid".into(), "unselected".into()),
+        ]);
+        assert_eq!(account.actual_model("public"), Some("alias"));
+        assert_eq!(account.actual_model("alias"), Some("actual"));
+        assert_eq!(account.actual_model("another"), Some("actual"));
+        assert_eq!(account.actual_model("invalid"), None);
+        assert_eq!(account.actual_model("unknown"), None);
+        account.models.clear();
+        assert_eq!(account.actual_model("alias"), None);
+    }
     #[test]
     fn encrypted_storage_round_trip() {
         let dir = tempfile::tempdir().unwrap();

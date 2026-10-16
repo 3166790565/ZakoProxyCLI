@@ -140,8 +140,8 @@ jobs:
           call('/api/setup', {'username':'ci-updater','password':secrets.token_urlsafe(32)})
           status = call('/api/updates')
           assert status['configured'] and not status.get('error'), status
-          assert status['current_version'] == '0.3.0'
-          call('/api/updates', {'tag':'v0.3.0','current_password':'wrong-password'}, 403)
+          assert status['current_version'] == '0.3.1'
+          call('/api/updates', {'tag':'v0.3.1','current_password':'wrong-password'}, 403)
           assert call('/api/bootstrap')['authenticated']
           call('/api/updates', {'tag':'--help','current_password':'wrong-password'}, 400)
           print('PASS updater health, authenticated status, strict tag and password verification; session retained')
