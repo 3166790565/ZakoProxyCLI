@@ -6,6 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     pull_policy: missing
     init: true
     restart: unless-stopped
@@ -17,8 +18,14 @@ services:
       BIND_ADDR: 0.0.0.0:1990
       TRUST_PROXY: "${TRUST_PROXY:-0}"
       RUST_LOG: "${RUST_LOG:-zakoai_proxy=info}"
+      UPDATER_URL: http://updater:9000/
+      UPDATER_TOKEN_FILE: /control/token
     volumes:
       - zako-data:/data
+      - update-control:/control:ro
+    depends_on:
+      updater:
+        condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -29,5 +36,37 @@ services:
     pids_limit: 256
     stop_grace_period: 30s
 
+  updater:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: updater
+    init: true
+    restart: unless-stopped
+    environment:
+      UPDATER_PROJECT_NAME: "${COMPOSE_PROJECT_NAME:-zakoai-proxy}"
+      UPDATER_SERVICE: proxy
+      DOCKER_CONFIG: /updates/docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - zako-data:/app-data
+      - update-control:/control
+      - update-state:/updates
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - CHOWN
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    stop_grace_period: 45s
+
 volumes:
   zako-data:
+  update-control:
+  update-state:

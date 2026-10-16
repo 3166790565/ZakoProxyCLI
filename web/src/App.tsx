@@ -26,6 +26,8 @@ import { Button, ErrorBox, Field, IconButton, Toast } from "./components";
 import { Dashboard } from "./Dashboard";
 import { GroupsPage, AccountsPage, KeysPage } from "./Management";
 import { SettingsPage } from "./Settings";
+import { PromoBanner } from "./PromoBanner";
+import { version } from "../package.json";
 
 const navigation = [
   { id: "dashboard", label: "仪表盘", icon: LayoutDashboard },
@@ -84,6 +86,7 @@ function Authentication({
   }
   return (
     <div className="auth-shell">
+      <PromoBanner />
       <header>
         <Brand />
         <span className="auth-label">
@@ -273,21 +276,27 @@ export default function App() {
   }
   if (loading)
     return (
-      <div className="full-loading">
-        <Brand />
-        <LoaderCircle className="spin" size={23} />
-        <span>正在连接工作空间</span>
+      <div className="startup-shell">
+        <PromoBanner />
+        <div className="full-loading">
+          <Brand />
+          <LoaderCircle className="spin" size={23} />
+          <span>正在连接工作空间</span>
+        </div>
       </div>
     );
   if (error)
     return (
-      <div className="full-loading">
-        <Brand />
-        <ErrorBox message={error} />
-        <Button onClick={() => void boot()}>
-          <RefreshCw size={16} />
-          重新连接
-        </Button>
+      <div className="startup-shell">
+        <PromoBanner />
+        <div className="full-loading">
+          <Brand />
+          <ErrorBox message={error} />
+          <Button onClick={() => void boot()}>
+            <RefreshCw size={16} />
+            重新连接
+          </Button>
+        </div>
       </div>
     );
   if (!state)
@@ -351,7 +360,7 @@ export default function App() {
             <span className="status-dot" />
           </div>
           <div className="sidebar-version">
-            <span>ZAKO / v0.1.1</span>
+            <span>ZAKO / v{version}</span>
             <a
               href="https://github.com/mizaawa/zakoai-proxy-cli"
               target="_blank"
@@ -365,6 +374,7 @@ export default function App() {
         </div>
       </aside>
       <div className="workspace">
+        <PromoBanner />
         <header className="topbar">
           <div className="breadcrumb">
             <IconButton

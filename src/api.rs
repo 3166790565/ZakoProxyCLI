@@ -95,7 +95,7 @@ fn password_hash(password: &str) -> Result<String, ApiError> {
         .map(|h| h.to_string())
         .map_err(|_| bad("Password hashing failed"))
 }
-fn verify(password: &str, hash: &str) -> bool {
+pub(crate) fn verify(password: &str, hash: &str) -> bool {
     PasswordHash::new(hash).ok().is_some_and(|h| {
         Argon2::default()
             .verify_password(password.as_bytes(), &h)

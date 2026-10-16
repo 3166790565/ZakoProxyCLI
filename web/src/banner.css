@@ -1,0 +1,106 @@
+.promo-banner {
+  flex-shrink: 0;
+  min-width: 0;
+  min-height: 44px;
+  background: #edf5f7;
+  border-bottom: 1px solid #dbe9ed;
+  color: #386677;
+}
+
+.promo-banner > a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  min-height: 44px;
+  padding: 8px 24px;
+  font-size: 11px;
+  line-height: 1.5;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 120ms ease;
+}
+
+.promo-banner .promo-brand,
+.promo-banner .promo-destination {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.promo-banner strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: #28566a;
+}
+
+.promo-banner .promo-label {
+  border-left: 1px solid #cbdfe6;
+  padding-left: 7px;
+  font-size: 9px;
+  color: #71909b;
+}
+
+.promo-banner .promo-description {
+  color: #66838d;
+}
+
+.promo-banner .promo-destination {
+  font-weight: 500;
+}
+
+.promo-banner > a:active {
+  background: #deedf2;
+}
+
+.workspace > .promo-banner,
+.auth-shell > .promo-banner {
+  position: sticky;
+  top: 0;
+  z-index: 21;
+}
+
+.startup-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.startup-shell > .full-loading {
+  min-height: 0;
+  flex: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .promo-banner > a:hover {
+    background: #e3f0f4;
+  }
+}
+
+@media (max-width: 900px) {
+  .promo-banner .promo-description {
+    display: none;
+  }
+}
+
+@media (max-width: 650px) {
+  .promo-banner {
+    min-height: calc(44px + env(safe-area-inset-top, 0px));
+  }
+
+  .promo-banner > a {
+    min-height: calc(44px + env(safe-area-inset-top, 0px));
+    padding: calc(8px + env(safe-area-inset-top, 0px))
+      max(17px, env(safe-area-inset-right, 0px)) 8px
+      max(17px, env(safe-area-inset-left, 0px));
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .workspace > .topbar {
+    top: calc(44px + env(safe-area-inset-top, 0px));
+    height: 59px;
+    padding-top: 0;
+  }
+}

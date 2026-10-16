@@ -21,6 +21,7 @@ import {
   Toggle,
 } from "./components";
 import type { PageProps } from "./Management";
+import { SystemUpdates } from "./SystemUpdates";
 
 export function SettingsPage({ state, reload, notify }: PageProps) {
   const [form, setForm] = useState<Settings>(state.settings);
@@ -34,6 +35,7 @@ export function SettingsPage({ state, reload, notify }: PageProps) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordError, setPasswordError] = useState("");
+  const [currentVersion, setCurrentVersion] = useState("");
   const changes =
     JSON.stringify({
       ...form,
@@ -314,9 +316,10 @@ export function SettingsPage({ state, reload, notify }: PageProps) {
           <span>部署模式</span>
           <strong className="deployment-label">独立部署</strong>
           <span>版本</span>
-          <code>v0.1.1</code>
+          <code>{currentVersion || "读取中…"}</code>
         </aside>
       </div>
+      <SystemUpdates notify={notify} onVersion={setCurrentVersion} />
       <section className="settings-section password-section">
         <div className="settings-section-heading">
           <span className="settings-icon">

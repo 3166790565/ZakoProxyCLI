@@ -92,6 +92,30 @@ export type Settings = {
   request_timeout_seconds: number;
   retention_days: number;
 };
+export type Release = {
+  tag: string;
+  version: string;
+  url: string;
+  published_at: string;
+  notes: string;
+};
+export type UpdateJob = {
+  id: string;
+  status: string;
+  version: string;
+  started_at: number;
+  finished_at: number | null;
+  message: string;
+  logs: string[];
+};
+export type UpdateStatus = {
+  current_version: string;
+  configured: boolean;
+  latest: Release | null;
+  update_available: boolean;
+  job: UpdateJob | null;
+  error?: string;
+};
 export type Profile = {
   id: string;
   name: string;

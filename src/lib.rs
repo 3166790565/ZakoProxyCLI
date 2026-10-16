@@ -2,6 +2,7 @@ pub mod api;
 pub mod profiles;
 pub mod proxy;
 pub mod store;
+pub mod update;
 
 use axum::{
     Router,
@@ -84,6 +85,8 @@ pub fn app(state: Shared) -> Router {
         .route("/api/keys/{id}/reveal", post(api::reveal_key))
         .route("/api/settings", get(api::settings).put(api::save_settings))
         .route("/api/password", post(api::password))
+        .route("/api/updates", get(update::status).post(update::start))
+        .route("/api/updates/latest", get(update::latest))
         .route("/api/stats", get(api::stats))
         .route("/api/profiles", get(api::profiles))
         .route("/api/models/discover", post(api::discover))
