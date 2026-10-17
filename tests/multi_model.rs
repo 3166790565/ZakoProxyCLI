@@ -28,6 +28,7 @@ fn fixture() -> (tempfile::TempDir, Shared) {
                 id: "multi-group".into(),
                 name: "All model profiles".into(),
                 profile_ids: Vec::new(),
+                default_strategy_enabled: false,
             });
             config.keys.push(ApiKey {
                 id: "multi-key".into(),
@@ -224,14 +225,14 @@ async fn all_catalog_models_inject_native_instructions_without_mutating_client_c
     assert_eq!(
         catalog.len(),
         35,
-        "expected three GPT, 28 Coldcoffee, and four Kimi profiles"
+        "expected three GPT, 27 Coldcoffee, one Hanshuang, and four Kimi profiles"
     );
     assert_eq!(
         catalog
             .iter()
             .map(|profile| profile.models.len())
             .sum::<usize>(),
-        35
+        36
     );
     select_profiles(
         &state,

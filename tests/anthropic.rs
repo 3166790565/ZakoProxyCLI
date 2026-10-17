@@ -30,6 +30,7 @@ fn fixture() -> (tempfile::TempDir, Shared) {
                 id: "anthropic-group".into(),
                 name: "Anthropic".into(),
                 profile_ids: vec![],
+                default_strategy_enabled: false,
             });
             config.keys.push(ApiKey {
                 id: "anthropic-key".into(),

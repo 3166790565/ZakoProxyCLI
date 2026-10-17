@@ -31,6 +31,8 @@ pub struct Group {
     pub name: String,
     #[serde(default)]
     pub profile_ids: Vec<String>,
+    #[serde(default)]
+    pub default_strategy_enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -40,6 +42,8 @@ struct GroupInput {
     name: String,
     #[serde(default, deserialize_with = "explicit_profile_ids")]
     profile_ids: Option<Vec<String>>,
+    #[serde(default)]
+    default_strategy_enabled: bool,
     #[serde(default)]
     models: Vec<String>,
     #[serde(default)]
@@ -66,6 +70,7 @@ impl From<GroupInput> for Group {
             id: input.id,
             name: input.name,
             profile_ids,
+            default_strategy_enabled: input.default_strategy_enabled,
         }
     }
 }

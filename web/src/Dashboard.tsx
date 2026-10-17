@@ -33,6 +33,7 @@ import {
   number,
   percent,
   time,
+  tokenCount,
 } from "./api";
 import type { State, Stats } from "./api";
 import { Badge, Button, Empty, ErrorBox, IconButton } from "./components";
@@ -237,23 +238,21 @@ export function Dashboard({
             <span>总 Token 用量</span>
             <Layers3 size={17} />
           </div>
-          <div className="metric-value">
-            <b className="metric-numeric-full">
-              {number(summary.total_tokens)}
-            </b>
-            <b
-              className="metric-numeric-short"
-              title={number(summary.total_tokens)}
-            >
-              {compact(summary.total_tokens)}
+          <div className="metric-value token-metric-value">
+            <b title={number(summary.total_tokens)}>
+              {tokenCount(summary.total_tokens)}
             </b>
             <span>tokens</span>
           </div>
           <div className="metric-bottom">
             <span className="legend-dot emerald" />
-            输入 {compact(summary.input_tokens)}
+            <span title={number(summary.input_tokens)}>
+              输入 {tokenCount(summary.input_tokens)}
+            </span>
             <span className="metric-separator" />
-            输出 {compact(summary.output_tokens)}
+            <span title={number(summary.output_tokens)}>
+              输出 {tokenCount(summary.output_tokens)}
+            </span>
           </div>
         </div>
         <div className="metric">
@@ -319,8 +318,8 @@ export function Dashboard({
           </span>
           <span>
             实时 TPM
-            <strong>
-              {compact(summary.tpm)}
+            <strong title={number(summary.tpm)}>
+              {tokenCount(summary.tpm)}
               <small>tokens/min</small>
             </strong>
           </span>
@@ -420,12 +419,12 @@ export function Dashboard({
                   dy={8}
                 />
                 <YAxis
-                  tickFormatter={compact}
+                  tickFormatter={metric === "tokens" ? tokenCount : compact}
                   tick={{ fontSize: 11, fill: "#929a97" }}
                   axisLine={false}
                   tickLine={false}
                   allowDecimals={false}
-                  width={60}
+                  width={metric === "tokens" ? 72 : 60}
                   domain={[0, "auto"]}
                 />
                 <Tooltip
@@ -435,7 +434,15 @@ export function Dashboard({
                     fontSize: 12,
                     boxShadow: "0 4px 16px #1b35200d",
                   }}
-                  formatter={(value) => number(Number(value || 0))}
+                  formatter={(value) =>
+                    metric === "tokens" ? (
+                      <span title={number(Number(value || 0))}>
+                        {tokenCount(Number(value || 0))}
+                      </span>
+                    ) : (
+                      number(Number(value || 0))
+                    )
+                  }
                   labelStyle={{ color: "#65716c", marginBottom: 7 }}
                 />
                 {metric === "tokens" ? (
@@ -520,7 +527,9 @@ export function Dashboard({
           </div>
           <div className="token-total">
             <span>累计消耗</span>
-            <strong>{compact(summary.total_tokens)}</strong>
+            <strong title={number(summary.total_tokens)}>
+              {tokenCount(summary.total_tokens)}
+            </strong>
             <small>TOKENS</small>
           </div>
           <div className="distribution-bar">
@@ -548,21 +557,27 @@ export function Dashboard({
               <i className="legend-dot emerald" />
               未缓存输入
             </span>
-            <strong>{number(summary.uncached_tokens)}</strong>
+            <strong title={number(summary.uncached_tokens)}>
+              {tokenCount(summary.uncached_tokens)}
+            </strong>
           </div>
           <div className="distribution-row">
             <span>
               <i className="legend-dot mint" />
               缓存输入
             </span>
-            <strong>{number(summary.cached_tokens)}</strong>
+            <strong title={number(summary.cached_tokens)}>
+              {tokenCount(summary.cached_tokens)}
+            </strong>
           </div>
           <div className="distribution-row">
             <span>
               <i className="legend-dot blue" />
               输出 Token
             </span>
-            <strong>{number(summary.output_tokens)}</strong>
+            <strong title={number(summary.output_tokens)}>
+              {tokenCount(summary.output_tokens)}
+            </strong>
           </div>
           <div className="cache-rate">
             <span>缓存命中率</span>
@@ -630,8 +645,13 @@ export function Dashboard({
                         {row.status}
                       </Badge>
                     </td>
-                    <td className="numeric mono">
-                      {compact(
+                    <td
+                      className="numeric mono"
+                      title={number(
+                        (row.input_tokens || 0) + (row.output_tokens || 0),
+                      )}
+                    >
+                      {tokenCount(
                         (row.input_tokens || 0) + (row.output_tokens || 0),
                       )}
                     </td>

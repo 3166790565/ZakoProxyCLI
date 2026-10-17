@@ -790,6 +790,7 @@ code {
 .chart {
   height: 225px;
   margin: 9px 13px 14px;
+  overflow: clip;
 }
 .chart-bottom {
   display: flex;
@@ -1625,6 +1626,33 @@ td strong {
 .profile-fieldset:disabled .profile-option {
   opacity: 0.6;
   cursor: wait;
+}
+.default-strategy-setting {
+  display: grid;
+  gap: 7px;
+  margin-top: 18px;
+  padding-top: 15px;
+  border-top: 1px solid var(--line);
+}
+.default-strategy-setting .toggle-label {
+  min-height: 32px;
+  width: fit-content;
+  max-width: 100%;
+  color: #627f5a;
+  touch-action: manipulation;
+}
+.default-strategy-setting .field-hint {
+  margin: 0;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.profile-fieldset:disabled .default-strategy-setting {
+  opacity: 0.6;
+}
+@media (pointer: coarse) {
+  .default-strategy-setting .toggle-label {
+    min-height: 44px;
+  }
 }
 @media (hover: hover) and (pointer: fine) {
   .profile-option:hover {
@@ -3565,8 +3593,9 @@ td strong {
 .metric-value > b {
   font-weight: inherit;
 }
-.metric-numeric-short {
-  display: none;
+.token-metric-value {
+  flex-wrap: wrap;
+  row-gap: 2px;
 }
 .throughput-strip > div > span:last-child {
   font-size: 11px;
@@ -3978,12 +4007,6 @@ td {
   }
   .metric-value > span {
     font-size: 8px;
-  }
-  .metric-numeric-full {
-    display: none;
-  }
-  .metric-numeric-short {
-    display: inline;
   }
   .chart-bottom > span:last-child {
     font-size: 7px;

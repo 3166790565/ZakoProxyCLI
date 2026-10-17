@@ -31,7 +31,7 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=6 \
 ENTRYPOINT ["/app/zakoai-updater"]
 
 FROM debian:bookworm-slim AS runtime
-LABEL org.opencontainers.image.version="0.5.0"
+LABEL org.opencontainers.image.version="0.6.0"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
@@ -45,6 +45,7 @@ COPY --from=frontend --chown=zako:zako /build/web/dist/ /app/web/dist/
 COPY --from=frontend --chown=zako:zako /build/web/dist/assets/third-party-licenses.txt /app/licenses/frontend-notices.txt
 COPY --chown=zako:zako LICENSE third_party/gpt-instruct.LICENSE third_party/coldcoffee.LICENSE /app/licenses/
 COPY --chown=zako:zako third_party/kimi-break/LICENSE /app/licenses/kimi-break.LICENSE
+COPY --chown=zako:zako third_party/hanshuang/NOTICE.md /app/licenses/hanshuang.NOTICE.md
 ENV DATA_DIR=/data \
     WEB_DIR=/app/web/dist \
     BIND_ADDR=0.0.0.0:1990 \

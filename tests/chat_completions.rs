@@ -31,6 +31,7 @@ fn fixture() -> (tempfile::TempDir, Shared) {
                 id: "chat-group".into(),
                 name: "Chat".into(),
                 profile_ids: Vec::new(),
+                default_strategy_enabled: false,
             });
             config.keys.push(ApiKey {
                 id: "chat-key".into(),

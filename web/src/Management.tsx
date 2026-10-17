@@ -20,7 +20,7 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { api, compact, copy, errorMessage, time } from "./api";
+import { api, copy, errorMessage, number, time, tokenCount } from "./api";
 import type { Account, Group, Profile, ProxyTestResult, RelayKey, State } from "./api";
 import {
   Badge,
@@ -223,7 +223,8 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
               <tbody>
                 {filtered.map((group) => {
                   const effectiveModels = groupModels(group, state.profiles);
-                  const configured = effectiveModels.length > 0;
+                  const configured =
+                    effectiveModels.length > 0 || group.default_strategy_enabled;
                   return (
                     <tr key={group.id}>
                       <td>
@@ -247,7 +248,10 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
                           {effectiveModels.length > 2 && (
                             <Badge>+{effectiveModels.length - 2}</Badge>
                           )}
-                          {!effectiveModels.length && (
+                          {group.default_strategy_enabled && (
+                            <Badge variant="green">默认策略</Badge>
+                          )}
+                          {!configured && (
                             <span className="muted">未启用策略</span>
                           )}
                         </div>
@@ -344,6 +348,9 @@ function GroupForm({
 }: PageProps & { group?: Group; onClose: () => void }) {
   const [name, setName] = useState(group?.name || "");
   const [profiles, setProfiles] = useState<string[]>(group?.profile_ids || []);
+  const [defaultStrategyEnabled, setDefaultStrategyEnabled] = useState(
+    group?.default_strategy_enabled ?? false,
+  );
   const [profileSearch, setProfileSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -367,7 +374,11 @@ function GroupForm({
       await api(
         group ? `/groups/${group.id}` : "/groups",
         group ? "PUT" : "POST",
-        { name: name.trim(), profile_ids: profiles },
+        {
+          name: name.trim(),
+          profile_ids: profiles,
+          default_strategy_enabled: defaultStrategyEnabled,
+        },
       );
       await reload();
       onClose();
@@ -457,6 +468,17 @@ function GroupForm({
                   : "没有匹配的模型，试试其他关键词"}
               </p>
             )}
+          </div>
+          <div className="default-strategy-setting">
+            <Toggle
+              label="开启破甲默认策略"
+              checked={defaultStrategyEnabled}
+              onChange={setDefaultStrategyEnabled}
+              describedBy="default-strategy-description"
+            />
+            <p id="default-strategy-description" className="field-hint">
+              开启后，未勾选模型将采取默认提示词注入尝试进行破甲，如造成无法正常使用现象请关闭此选项。
+            </p>
           </div>
         </fieldset>
       </ModalForm>
@@ -1322,14 +1344,23 @@ export function KeysPage({ state, reload, notify }: PageProps) {
                       </Badge>
                     </td>
                     <td className="numeric">
-                      <strong className="mono">
-                        {compact(
+                      <strong
+                        className="mono"
+                        title={number(
+                          (key.usage?.input_tokens || 0) +
+                            (key.usage?.output_tokens || 0),
+                        )}
+                      >
+                        {tokenCount(
                           (key.usage?.input_tokens || 0) +
                             (key.usage?.output_tokens || 0),
                         )}
                       </strong>
-                      <span className="cell-secondary">
-                        缓存 {compact(key.usage?.cached_tokens || 0)}
+                      <span
+                        className="cell-secondary"
+                        title={number(key.usage?.cached_tokens || 0)}
+                      >
+                        缓存 {tokenCount(key.usage?.cached_tokens || 0)}
                       </span>
                     </td>
                     <td>

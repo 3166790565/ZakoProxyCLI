@@ -242,10 +242,23 @@ pub async fn groups(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
     auth(&s, &h)?;
     Ok(Json(json!(s.store.config()?.groups)))
 }
+#[derive(Deserialize)]
+pub struct GroupSaveInput {
+    #[serde(flatten)]
+    group: Group,
+    #[serde(default, deserialize_with = "explicit_default_strategy")]
+    default_strategy_enabled: Option<bool>,
+}
+fn explicit_default_strategy<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    bool::deserialize(deserializer).map(Some)
+}
 pub async fn save_group(
     State(s): State<Shared>,
     h: HeaderMap,
-    Json(g): Json<Group>,
+    Json(g): Json<GroupSaveInput>,
 ) -> ApiResult<Value> {
     save_group_impl(&s, &h, None, g)
 }
@@ -253,7 +266,7 @@ pub async fn save_group_id(
     State(s): State<Shared>,
     h: HeaderMap,
     Path(id): Path<String>,
-    Json(g): Json<Group>,
+    Json(g): Json<GroupSaveInput>,
 ) -> ApiResult<Value> {
     save_group_impl(&s, &h, Some(id), g)
 }
@@ -261,9 +274,13 @@ fn save_group_impl(
     s: &Shared,
     h: &HeaderMap,
     path: Option<String>,
-    mut g: Group,
+    input: GroupSaveInput,
 ) -> ApiResult<Value> {
     auth(s, h)?;
+    let mut g = input.group;
+    if let Some(enabled) = input.default_strategy_enabled {
+        g.default_strategy_enabled = enabled;
+    }
     name(&g.name)?;
     let mut selected = std::collections::HashSet::new();
     g.profile_ids.retain(|id| selected.insert(id.clone()));
@@ -282,6 +299,9 @@ fn save_group_impl(
                 .iter_mut()
                 .find(|x| x.id == p)
                 .ok_or("Group not found")?;
+            if input.default_strategy_enabled.is_none() {
+                g.default_strategy_enabled = existing.default_strategy_enabled;
+            }
             *existing = g.clone();
         } else {
             c.groups.push(g.clone());

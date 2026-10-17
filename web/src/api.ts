@@ -53,6 +53,7 @@ export type Group = {
   id: string;
   name: string;
   profile_ids: string[];
+  default_strategy_enabled: boolean;
 };
 export type Account = {
   id: string;
@@ -205,6 +206,16 @@ export const compact = (value = 0) =>
     notation: "compact",
     maximumFractionDigits: 2,
   }).format(value);
+export const tokenCount = (value = 0) => {
+  const magnitude = Math.abs(value);
+  const unit = ([
+    [1e12, "T"],
+    [1e9, "B"],
+    [1e6, "M"],
+    [1e3, "K"],
+  ] as const).find(([threshold]) => magnitude >= threshold);
+  return unit ? `${(value / unit[0]).toFixed(2)}${unit[1]}` : number(value);
+};
 export const percent = (value = 0) => `${value.toFixed(1)}%`;
 export const time = (value: number) =>
   new Date(value * 1000).toLocaleString("zh-CN", {

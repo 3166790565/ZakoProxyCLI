@@ -45,6 +45,12 @@ pub fn all() -> &'static [Profile] {
                 _ => panic!("Unsupported Coldcoffee model family"),
             }
             .into();
+            // Preserve the historical ID so already-selected groups keep their choice.
+            if profile.id == "coldcoffee-deepseek-v4.1-flash-v1" {
+                profile.name = "hanshuang · deepseek-v4.1-flash".into();
+                profile.models.push("deepseek-4.1-flash".into());
+                profile.instruction = include_str!("../profiles/hanshuang/system.md").into();
+            }
             profiles.push(profile);
         }
         let kimi: Vec<Profile> =
@@ -96,7 +102,15 @@ pub fn instruction(group: &Group, model: &str) -> Option<&'static str> {
         .filter_map(|id| find(id))
         .find(|profile| profile.models.iter().any(|selected| selected == model))
         .map(|profile| profile.instruction.as_str())
+        .or_else(|| {
+            group
+                .default_strategy_enabled
+                .then_some(DEFAULT_INSTRUCTION)
+        })
 }
+
+/// Opt-in fallback, applied only when no selected exact-model profile matches.
+pub const DEFAULT_INSTRUCTION: &str = include_str!("../profiles/default.md");
 
 #[cfg(test)]
 mod tests {
@@ -141,16 +155,30 @@ mod tests {
         let mut models = std::collections::HashSet::new();
         for entry in entries {
             let profile = find(entry["id"].as_str().unwrap()).unwrap();
-            assert_eq!(profile.models.len(), 1);
+            let is_hanshuang = profile.id == "coldcoffee-deepseek-v4.1-flash-v1";
+            assert_eq!(profile.models.len(), if is_hanshuang { 2 } else { 1 });
             let model = &profile.models[0];
             assert!(!model.contains("svg"));
             assert!(
                 models.insert(model.clone()),
                 "duplicate exact model {model}"
             );
-            assert!(profile.instruction.contains("ZakoAI · 冷咖啡 API 内联适配"));
-            assert!(profile.instruction.contains("三拍"));
-            assert!(profile.instruction.contains("CHA-ROUTE"));
+            if is_hanshuang {
+                assert_eq!(
+                    profile.instruction,
+                    include_str!("../profiles/hanshuang/system.md")
+                );
+                assert!(
+                    profile
+                        .models
+                        .iter()
+                        .any(|model| model == "deepseek-4.1-flash")
+                );
+            } else {
+                assert!(profile.instruction.contains("ZakoAI · 冷咖啡 API 内联适配"));
+                assert!(profile.instruction.contains("三拍"));
+                assert!(profile.instruction.contains("CHA-ROUTE"));
+            }
             assert!(!profile.instruction.contains("{{"));
             assert!(!profile.instruction.contains("127.0.0.1:13337"));
             let group = Group {

@@ -191,16 +191,19 @@ export function Toggle({
   checked,
   onChange,
   label,
+  describedBy,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   label: string;
+  describedBy?: string;
 }) {
   return (
     <label className="toggle-label">
       <input
         type="checkbox"
         role="switch"
+        aria-describedby={describedBy}
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
       />
