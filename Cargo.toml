@@ -1,6 +1,6 @@
 [package]
 name = "zakoai-proxy"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 license = "MIT"
 default-run = "zakoai-proxy"
@@ -16,7 +16,7 @@ chrono = { version = "0.4", features = ["serde"] }
 futures-util = "0.3"
 hex = "0.4"
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "socks"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

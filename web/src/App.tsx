@@ -27,6 +27,7 @@ import { Dashboard } from "./Dashboard";
 import { GroupsPage, AccountsPage, KeysPage } from "./Management";
 import { SettingsPage } from "./Settings";
 import { PromoBanner } from "./PromoBanner";
+import { useUpdateCheck } from "./useUpdateCheck";
 import { version } from "../package.json";
 
 const navigation = [
@@ -189,6 +190,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [updateFocusRequest, setUpdateFocusRequest] = useState(0);
+  const updateCheck = useUpdateCheck(!!state);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(
     null,
   );
@@ -246,6 +249,7 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("zako-page", page);
     setMobileNav(false);
+    if (page !== "settings") setUpdateFocusRequest(0);
   }, [page]);
   useEffect(() => {
     if (!mobileNav) return;
@@ -393,6 +397,22 @@ export default function App() {
             <span className="breadcrumb-workspace">工作空间</span>
             <ChevronRight size={14} className="breadcrumb-chevron" />
             <span>{activePage.label}</span>
+            {updateCheck.status?.update_available && (
+              <button
+                type="button"
+                className="update-available-badge"
+                title={`发现新版本 ${updateCheck.status.latest?.tag || ""}，前往系统更新`}
+                aria-label="有新版本，前往系统设置更新"
+                onClick={() => {
+                  setPage("settings");
+                  setMobileNav(false);
+                  setUpdateFocusRequest((value) => value + 1);
+                }}
+              >
+                <span className="update-available-dot" aria-hidden="true" />
+                有新版本
+              </button>
+            )}
           </div>
           <div className="topbar-actions">
             <span className="live-state">
@@ -422,7 +442,13 @@ export default function App() {
           {page === "groups" && <GroupsPage {...props} />}
           {page === "accounts" && <AccountsPage {...props} />}
           {page === "keys" && <KeysPage {...props} />}
-          {page === "settings" && <SettingsPage {...props} />}
+          {page === "settings" && (
+            <SettingsPage
+              {...props}
+              updateCheck={updateCheck}
+              updateFocusRequest={updateFocusRequest}
+            />
+          )}
         </main>
         <footer className="workspace-footer">
           <span>ZAKO API RELAY</span>

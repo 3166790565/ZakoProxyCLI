@@ -25,6 +25,7 @@ jobs:
       - name: Check release version consistency
         run: |
           python3 scripts/check-release-version.py
+          python3 scripts/import-kimi-break.py --check
           python3 -m unittest discover -s scripts -p 'test_*.py'
       - uses: dtolnay/rust-toolchain@1.99.0
         with:

@@ -72,6 +72,8 @@ docker compose down
 
 ### 在控制台更新
 
+v0.5.0 起，登录后自动检查新版本，并在页面可见时每 15 分钟复查；后台标签暂停检查，退出登录停止检查。发现更高的正式版本时，页面标题旁显示带圆点的黄色“有新版本”标签，点击进入系统设置并定位更新区域。手动检查与顶部提示同步。查询在服务端合并并发请求，成功缓存 5 分钟，失败退避 1 分钟；未配置更新器也可检查和提示，执行构建更新仍需配置更新器。
+
 v0.3.0 起可在 **系统设置 → GitHub 源码更新** 中检查 GitHub 最新正式 Release。选择更新后需再次输入当前管理员密码；更新器从官方仓库检出对应标签，在后台从源码构建镜像，并显示构建、部署和健康检查日志。构建期间旧版本继续服务，切换版本时会短暂中断连接；页面恢复后可继续查看结果。
 
 Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。主程序通过内部 `UPDATER_URL=http://updater:9000/` 及只读 `/control/token` 访问它。Docker socket 仅挂载给更新器，不挂载给公开的代理服务。更新器持有近似宿主机 root 的 Docker 控制能力，请仅在受控服务器上部署，不要对外暴露内部接口或共享令牌。
@@ -82,8 +84,8 @@ Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。�
 
 ## 配置中转
 
-1. **分组管理：** 创建分组，在“破甲策略”中通过 `profile_ids` 独立勾选所需模型策略。现有 3 个 GPT 策略保留，并新增 28 个 Claude、Grok、Gemini、DeepSeek 和 GLM 的逐模型策略，共 31 个，完整名单见下表。分组除名称外只配置策略选择，不再配置自定义模型列表或指令。按账号映射后的实际模型精确匹配已选策略：只使用该模型自己的配置，未勾选则不注入，同时勾选多个模型不会拼接不同策略。旧版未修改过的内置模板分组会自动识别。删除分组前需先解除账号和密钥引用。
-2. **账号管理：** 输入上游端点及 API key，“支持协议”默认勾选 `responses` / `compact` / `chat` / `anthropic`，可按上游中转站支持情况取消，再拉取并勾选上游实际可用模型、选择所属分组。`chat` 对应 `/v1/chat/completions`，`anthropic` 对应 `/v1/messages`；选择 Anthropic 获取模型时也使用 Anthropic 鉴权。模型名称不限定协议：例如 Grok、Gemini、DeepSeek 或 GLM 可以走中转站提供的 OpenAI 兼容或 Anthropic 兼容接口。可通过 `model_mappings` 设置“请求模型 → 实际模型”，映射目标必须已勾选；映射仅执行一次，不递归串联，未配置映射的请求使用同名模型。端点可带或不带 `/v1`。RPM 和并发限制设为 `0` 表示不限制；编辑时密钥留空会保留原密钥。
+1. **分组管理：** 创建分组，在“破甲策略”中通过 `profile_ids` 独立勾选所需模型策略。现有 3 个 GPT 策略保留，包含 28 个 Claude、Grok、Gemini、DeepSeek 和 GLM 策略，以及 4 个 Kimi 策略，共 35 个，完整名单见下表。分组除名称外只配置策略选择，不再配置自定义模型列表或指令。按账号映射后的实际模型精确匹配已选策略：只使用该模型自己的配置，未勾选则不注入，同时勾选多个模型不会拼接不同策略。旧版未修改过的内置模板分组会自动识别。删除分组前需先解除账号和密钥引用。
+2. **账号管理：** 输入上游端点及 API key，“支持协议”默认勾选 `responses` / `compact` / `chat` / `anthropic`，可按上游中转站支持情况取消，再拉取并勾选上游实际可用模型、选择所属分组。`chat` 对应 `/v1/chat/completions`，`anthropic` 对应 `/v1/messages`；选择 Anthropic 获取模型时也使用 Anthropic 鉴权。模型名称不限定协议：例如 Grok、Gemini、DeepSeek 或 GLM 可以走中转站提供的 OpenAI 兼容或 Anthropic 兼容接口。可通过 `model_mappings` 设置“请求模型 → 实际模型”，映射目标必须已勾选；映射仅执行一次，不递归串联，未配置映射的请求使用同名模型。端点可带或不带 `/v1`。RPM 和并发限制设为 `0` 表示不限制；编辑时密钥留空会保留原密钥。“模型映射”和“所属分组”之间可选填账号代理，支持 `socks5://host:port`、`socks5h://host:port` 和带用户名密码的链接（特殊字符需百分号编码）。右侧测试按钮通过该代理请求当前上游模型接口，显示耗时、HTTP 状态或脱敏错误；HTTP 401/403 表示代理已连通但上游鉴权失败。代理地址加密保存，编辑留空保留，点击“移除代理”并保存才会删除。保存后四协议、流式请求及模型获取均走该账号代理，代理失败不会自动改为该账号直连；重试使用下一个账号自己的代理。Docker 中 `127.0.0.1` 指容器自身，应填写容器可访问的代理地址。
 3. **密钥管理：** 为指定分组创建命名的客户端 API key，可在创建后及之后登录控制台时复制。修改所属分组无需更换 key；停用或删除后阻止新的请求。API 基础地址为当前站点来源加 `/v1`。
 4. **系统设置：** 设置安全入口、最大重试数、失败阈值、冷却时间、请求超时及统计保留天数。修改密码需验证原密码并再次确认新密码，成功后撤销所有会话。此处二次确认不是 TOTP 等独立第二认证因素。
 
@@ -91,7 +93,7 @@ Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。�
 
 ### 内置策略模型
 
-新增策略保留上游席位正文、工作链和完整路由技能，单次匹配注入约 64–66 KB 的 UTF-8 文本，会占用上下文并增加输入 token。来源、逐文件哈希及适配范围记录于 [profiles/coldcoffee/SOURCE.json](profiles/coldcoffee/SOURCE.json)；可使用 `python scripts/import-coldcoffee.py UPSTREAM_CHECKOUT` 从指定版本的干净上游副本重新生成，脚本只读取数据，不执行上游安装器或 Skill。
+冷咖啡策略保留上游席位正文、工作链和完整路由技能，单次匹配注入约 64–66 KB 的 UTF-8 文本，会占用上下文并增加输入 token。来源、逐文件哈希及适配范围记录于 [profiles/coldcoffee/SOURCE.json](profiles/coldcoffee/SOURCE.json)；可使用 `python scripts/import-coldcoffee.py UPSTREAM_CHECKOUT` 从指定版本的干净上游副本重新生成，脚本只读取数据，不执行上游安装器或 Skill。
 
 | 模型系列 | 精确匹配的实际模型 ID |
 | --- | --- |
@@ -101,6 +103,7 @@ Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。�
 | Gemini | `gemini-3-flash`、`gemini-3.1-flash-image`、`gemini-3.1-pro`、`gemini-3.1-pro-preview`、`gemini-3.6-flash`、`gemini-3.7-flash`、`gemini-3.8-flash` |
 | DeepSeek | `deepseek-v4-flash`、`deepseek-v4-flash-0731`、`deepseek-v4-pro`、`deepseek-v4-pro-0813`、`deepseek-v4.1-flash` |
 | GLM | `glm-5.3` |
+| Kimi | `kimi-k3`、`kimi-k2.7`、`kimi-k2.7-code`、`kimi-k2.6` |
 
 每个模型单独选择，不按系列通配匹配。名单表示可选策略，并不承诺上游提供这些模型；以账号实际可用模型和协议为准。新增策略参考冷咖啡项目的客户端席位指令并改编为内联文本，DeepSeek 的 Skill 内容也以内联文本形式提供；代理不会安装本地 Skill、工具或客户端配置，也不会伪造工具执行结果。策略只会随请求发送给上游，实际模型行为须在使用的中转站验证。
 
@@ -192,3 +195,9 @@ cargo test --locked --all-targets --all-features
 - **上游版权与协议：** Copyright (c) 2026 3641397194-wq，MIT License；原始声明保留于 [third_party/coldcoffee.LICENSE](third_party/coldcoffee.LICENSE)，同时分发到容器的 `/app/licenses/coldcoffee.LICENSE`。
 - **改编范围：** 将上游 Claude、Grok、Gemini、DeepSeek 和 GLM 客户端的席位指令和 Skill 文本改编为按模型选择的 API 请求内联策略；不包含上游桌面安装器、私有中转工作流或本地 Skill 执行环境。
 - **效果边界：** 引用和改编不表示上游认可本项目，也不构成绕过模型拒答、工具可用性或模型能力的保证。分发源码或容器时应保留本项目及上述第三方声明。
+
+Kimi 的四个逐模型策略参考并改编自 [YD-233/kimi-break](https://github.com/YD-233/kimi-break)，固定参考版本为 [`c6a7f6dfffd17c45e60f6eb965f1d4bc169cd8f6`](https://github.com/YD-233/kimi-break/tree/c6a7f6dfffd17c45e60f6eb965f1d4bc169cd8f6)。感谢上游作者与贡献者。
+
+- **上游版权与协议：** Copyright (c) 2026 YD-233，MIT License；完整声明与原始 `README.md`、`SYSTEM.md` 保留于 [third_party/kimi-break](third_party/kimi-break)，容器分发 `/app/licenses/kimi-break.LICENSE`。
+- **API 适配范围：** 保留上游人格、行为策略、编码规范与用户风格正文；将 Kimi Code CLI 的模板变量、环境与项目章节改为本次 API 请求实际提供的上下文，不预设本地工具、路径、Skill 或插件。四个模型逐项选择，沿用现有 OpenAI / Anthropic 兼容协议注入链路。单次匹配增加 13,264 字节 UTF-8 指令。
+- **复现与边界：** 固定源文件和生成文本的 SHA-256 记录于 [profiles/kimi-break/SOURCE.json](profiles/kimi-break/SOURCE.json)。运行 `python scripts/import-kimi-break.py --check` 可完全离线核验，去掉 `--check` 可重新生成；也可传入该提交的干净上游 checkout。导入器只读取文本数据。模型 ID 为可选配置，不保证中转站提供这些模型；本地测试确认策略注入及原请求保留，实际模型响应效果取决于所用服务。

@@ -77,6 +77,9 @@ pub struct Account {
     pub endpoint: String,
     #[serde(default)]
     pub api_key: String,
+    /// Encrypted SOCKS proxy URL; never returned by account APIs.
+    #[serde(default)]
+    pub proxy_url: String,
     #[serde(default)]
     pub models: Vec<String>,
     #[serde(default)]

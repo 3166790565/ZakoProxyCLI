@@ -400,8 +400,15 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
                 continue;
             }
         };
-        let mut request = state
-            .client
+        let client = match crate::network::account_client(&state, account) {
+            Ok(client) => client,
+            Err(_) => {
+                log.entry.status = 502;
+                health(&state, &account.id, &config.settings, false);
+                continue;
+            }
+        };
+        let mut request = client
             .post(url)
             .json(&upstream_body)
             .timeout(Duration::from_secs(u64::from(

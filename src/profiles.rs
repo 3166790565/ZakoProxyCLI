@@ -15,7 +15,7 @@ pub struct Profile {
 
 pub fn model_family(model: &str) -> Option<&'static str> {
     [
-        "gpt-5.6", "gpt-6.1", "gpt-6", "claude", "grok", "gemini", "deepseek", "glm",
+        "gpt-5.6", "gpt-6.1", "gpt-6", "claude", "grok", "gemini", "deepseek", "glm", "kimi",
     ]
     .into_iter()
     .find(|family| {
@@ -45,6 +45,13 @@ pub fn all() -> &'static [Profile] {
                 _ => panic!("Unsupported Coldcoffee model family"),
             }
             .into();
+            profiles.push(profile);
+        }
+        let kimi: Vec<Profile> =
+            serde_json::from_str(include_str!("../profiles/kimi-break/index.json"))
+                .expect("Embedded kimi-break catalog must be valid JSON");
+        for mut profile in kimi {
+            profile.instruction = include_str!("../profiles/kimi-break/system.md").into();
             profiles.push(profile);
         }
         let mut ids = std::collections::HashSet::new();
@@ -115,6 +122,8 @@ mod tests {
             ("gemini-3.1-pro-preview", Some("gemini")),
             ("deepseek-v4.1-flash", Some("deepseek")),
             ("glm-5.3", Some("glm")),
+            ("kimi-k2.7-code", Some("kimi")),
+            ("kimilike-k3", None),
             ("claudelike-5", None),
             ("grokish", None),
             ("Gemini-3.1-pro", None),
@@ -128,7 +137,7 @@ mod tests {
         let entries: Vec<serde_json::Value> =
             serde_json::from_str(include_str!("../profiles/coldcoffee/index.json")).unwrap();
         assert_eq!(entries.len(), 28);
-        assert_eq!(all().len(), 31);
+        assert_eq!(all().len(), 35);
         let mut models = std::collections::HashSet::new();
         for entry in entries {
             let profile = find(entry["id"].as_str().unwrap()).unwrap();

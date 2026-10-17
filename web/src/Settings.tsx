@@ -22,8 +22,15 @@ import {
 } from "./components";
 import type { PageProps } from "./Management";
 import { SystemUpdates } from "./SystemUpdates";
+import type { UpdateCheck } from "./useUpdateCheck";
 
-export function SettingsPage({ state, reload, notify }: PageProps) {
+export function SettingsPage({
+  state,
+  reload,
+  notify,
+  updateCheck,
+  updateFocusRequest,
+}: PageProps & { updateCheck: UpdateCheck; updateFocusRequest: number }) {
   const [form, setForm] = useState<Settings>(state.settings);
   const [securityEnabled, setSecurityEnabled] = useState(
     !!state.settings.security_path,
@@ -319,7 +326,12 @@ export function SettingsPage({ state, reload, notify }: PageProps) {
           <code>{currentVersion || "读取中…"}</code>
         </aside>
       </div>
-      <SystemUpdates notify={notify} onVersion={setCurrentVersion} />
+      <SystemUpdates
+        notify={notify}
+        onVersion={setCurrentVersion}
+        updateCheck={updateCheck}
+        focusRequest={updateFocusRequest}
+      />
       <section className="settings-section password-section">
         <div className="settings-section-heading">
           <span className="settings-icon">

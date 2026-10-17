@@ -67,7 +67,16 @@ export type Account = {
   concurrency: number;
   enabled: boolean;
   has_api_key: boolean;
+  has_proxy: boolean;
+  proxy_display: string;
   runtime: { active: number; failures: number; cooldown_until: number };
+};
+export type ProxyTestResult = {
+  connected: boolean;
+  ok: boolean;
+  latency_ms: number;
+  upstream_status: number | null;
+  error: string | null;
 };
 export type Usage = {
   input_tokens: number;

@@ -223,15 +223,15 @@ async fn all_catalog_models_inject_native_instructions_without_mutating_client_c
     let catalog = profiles::all();
     assert_eq!(
         catalog.len(),
-        31,
-        "expected three existing and 28 imported model profiles"
+        35,
+        "expected three GPT, 28 Coldcoffee, and four Kimi profiles"
     );
     assert_eq!(
         catalog
             .iter()
             .map(|profile| profile.models.len())
             .sum::<usize>(),
-        31
+        35
     );
     select_profiles(
         &state,

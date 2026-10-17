@@ -1,7 +1,11 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
+  Activity,
+  AlertCircle,
   ArrowRight,
+  CheckCircle2,
+  LoaderCircle,
   Check,
   Copy,
   Database,
@@ -17,7 +21,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, compact, copy, errorMessage, time } from "./api";
-import type { Account, Group, Profile, RelayKey, State } from "./api";
+import type { Account, Group, Profile, ProxyTestResult, RelayKey, State } from "./api";
 import {
   Badge,
   Button,
@@ -691,6 +695,12 @@ function AccountForm({
   const [name, setName] = useState(account?.name || "");
   const [endpoint, setEndpoint] = useState(account?.endpoint || "");
   const [secret, setSecret] = useState("");
+  const [proxyUrl, setProxyUrl] = useState("");
+  const [proxyChanged, setProxyChanged] = useState(false);
+  const [testingProxy, setTestingProxy] = useState(false);
+  const [proxyResult, setProxyResult] = useState<ProxyTestResult | null>(null);
+  const [proxyError, setProxyError] = useState("");
+  const proxyRevision = useRef(0);
   const [protocols, setProtocols] = useState(
     account?.protocols || ["responses", "compact", "chat", "anthropic"],
   );
@@ -713,6 +723,33 @@ function AccountForm({
   const [busy, setBusy] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [error, setError] = useState("");
+  useEffect(() => {
+    proxyRevision.current += 1;
+    setProxyResult(null);
+    setProxyError("");
+  }, [proxyUrl, proxyChanged, endpoint, secret, protocols]);
+  const proxyInput = proxyChanged || !account ? { proxy_url: proxyUrl.trim() } : {};
+  const hasProxy = !!proxyUrl.trim() || (!!account?.has_proxy && !proxyChanged);
+  async function testProxy() {
+    const revision = proxyRevision.current;
+    setTestingProxy(true);
+    setProxyResult(null);
+    setProxyError("");
+    try {
+      const result = await api<ProxyTestResult>("/accounts/proxy-test", "POST", {
+        endpoint: endpoint.trim(),
+        api_key: secret,
+        protocols,
+        ...proxyInput,
+        ...(account ? { account_id: account.id } : {}),
+      });
+      if (revision === proxyRevision.current) setProxyResult(result);
+    } catch (failure) {
+      if (revision === proxyRevision.current) setProxyError(errorMessage(failure));
+    } finally {
+      setTestingProxy(false);
+    }
+  }
   function selectModels(selected: string[]) {
     setModels(selected);
     const affected = mappings.filter(
@@ -738,6 +775,7 @@ function AccountForm({
           endpoint,
           api_key: secret,
           protocols,
+          ...proxyInput,
           ...(account ? { account_id: account.id } : {}),
         },
       );
@@ -792,6 +830,7 @@ function AccountForm({
           protocols,
           models,
           model_mappings: modelMappings,
+          ...proxyInput,
           group_ids: groups,
           priority,
           rpm,
@@ -813,13 +852,13 @@ function AccountForm({
       title={account ? "编辑账号" : "添加上游账号"}
       subtitle="连接与请求调度"
       onClose={onClose}
-      busy={busy || discovering}
+      busy={busy || discovering || testingProxy}
       wide
     >
       <ModalForm
         onSubmit={submit}
         onClose={onClose}
-        busy={busy || discovering}
+        busy={busy || discovering || testingProxy}
         error={error}
         submit={account ? "保存更改" : "添加账号"}
       >
@@ -892,7 +931,7 @@ function AccountForm({
               type="button"
               className="small-button"
               busy={discovering}
-              disabled={!endpoint || (!secret && !account)}
+              disabled={busy || testingProxy || !endpoint || (!secret && !account)}
               onClick={() => void discover()}
             >
               <RefreshCw size={14} />
@@ -1046,6 +1085,56 @@ function AccountForm({
               添加映射
             </Button>
           </fieldset>
+        </div>
+        <div className="field account-proxy-field">
+          <label className="field-label" htmlFor="account-proxy-url">代理设置（可选）</label>
+          <div className="inline-input proxy-input">
+            <input
+              id="account-proxy-url"
+              type="password"
+              autoComplete="new-password"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              maxLength={4096}
+              value={proxyUrl}
+              disabled={busy || discovering || testingProxy}
+              onChange={(event) => { setProxyUrl(event.target.value); setProxyChanged(true); }}
+              placeholder={account?.has_proxy && !proxyChanged ? "已保存代理 · 留空保留，输入新链接替换" : "socks5://用户名:密码@主机:端口"}
+              aria-describedby="account-proxy-hint account-proxy-result"
+            />
+            <IconButton
+              title="测试代理连接与延迟"
+              disabled={busy || discovering || testingProxy || !hasProxy || !endpoint.trim()}
+              aria-busy={testingProxy}
+              onClick={() => void testProxy()}
+            >
+              {testingProxy ? <LoaderCircle className="spin" size={18} /> : <Activity size={18} />}
+            </IconButton>
+          </div>
+          <div id="account-proxy-hint" className="field-hint proxy-hint">
+            <span>{account?.has_proxy && !proxyChanged
+              ? `当前：${account.proxy_display}；留空保留。`
+              : proxyChanged && !proxyUrl.trim() ? "保存后不使用账号代理。" : "支持 socks5:// 和 socks5h://；保存后所有上游请求及模型获取均使用此代理。"}</span>
+            {account?.has_proxy && (
+              <button type="button" className="proxy-clear" disabled={busy || discovering || testingProxy} onClick={() => { setProxyUrl(""); setProxyChanged(!proxyChanged); }}>
+                {proxyChanged ? "保留已保存代理" : "移除代理"}
+              </button>
+            )}
+          </div>
+          <div id="account-proxy-result" role="status" aria-live="polite">
+            {testingProxy && <p className="proxy-result">正在通过代理连接上游…</p>}
+            {proxyError && <p className="proxy-result failure"><AlertCircle size={16} />{proxyError}</p>}
+            {proxyResult && <div className={`proxy-result ${proxyResult.ok ? "success" : proxyResult.connected ? "warning" : "failure"}`}>
+              {proxyResult.ok ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+              <span>
+                {proxyResult.connected ? `代理已连通 · ${proxyResult.latency_ms} ms` : `代理连接失败 · ${proxyResult.latency_ms} ms`}
+                {proxyResult.upstream_status !== null && ` · HTTP ${proxyResult.upstream_status}`}
+                {proxyResult.error && <small>{proxyResult.error}</small>}
+                {proxyResult.connected && !proxyResult.ok && <small>代理已连接到上游，请检查 API Key、端点和访问权限。</small>}
+              </span>
+            </div>}
+          </div>
         </div>
         <fieldset className="form-fieldset">
           <legend>所属分组</legend>

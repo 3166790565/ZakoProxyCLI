@@ -1,4 +1,5 @@
 pub mod api;
+pub mod network;
 pub mod profiles;
 pub mod proxy;
 pub mod store;
@@ -32,6 +33,7 @@ pub struct Runtime {
 pub struct App {
     pub store: Store,
     pub client: reqwest::Client,
+    pub proxy_clients: Mutex<HashMap<String, (String, reqwest::Client)>>,
     pub runtime: Mutex<HashMap<String, Runtime>>,
     pub login_attempts: Mutex<HashMap<String, (i64, u32)>>,
     pub web_dir: std::path::PathBuf,
@@ -73,6 +75,7 @@ pub fn app(state: Shared) -> Router {
             put(api::save_group_id).delete(api::delete_group),
         )
         .route("/api/accounts", get(api::accounts).post(api::save_account))
+        .route("/api/accounts/proxy-test", post(api::test_proxy))
         .route(
             "/api/accounts/{id}",
             put(api::save_account_id).delete(api::delete_account),
@@ -192,6 +195,7 @@ pub fn new_app(data_dir: &std::path::Path, web_dir: std::path::PathBuf) -> Resul
             .build()
             .map_err(|e| e.to_string())?,
         runtime: Mutex::new(HashMap::new()),
+        proxy_clients: Mutex::new(HashMap::new()),
         login_attempts: Mutex::new(HashMap::new()),
         web_dir,
     }))

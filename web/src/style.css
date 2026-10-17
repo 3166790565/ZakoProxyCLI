@@ -4007,3 +4007,24 @@ td {
     scroll-behavior: auto !important;
   }
 }
+
+/* Release availability and per-account proxy controls. */
+.update-available-badge { display:inline-flex; align-items:center; gap:6px; flex-shrink:0; min-height:30px; padding:5px 9px; border:1px solid #eed48b; border-radius:6px; background:#fff4cf; color:#8a6200; font-size:11px; font-weight:600; line-height:1.2; white-space:nowrap; cursor:pointer; touch-action:manipulation; user-select:none; }
+.update-available-dot { width:5px; height:5px; border-radius:50%; background:currentColor; flex-shrink:0; }
+.update-available-badge:focus-visible { outline:2px solid #b98600; outline-offset:3px; }
+.update-available-badge:active { background:#f8e6af; }
+@media (hover:hover) and (pointer:fine) { .update-available-badge:hover { background:#ffedb0; } }
+.system-updates { scroll-margin-top:84px; }
+.system-updates:focus { outline:2px solid #cbb16c; outline-offset:5px; }
+.proxy-input input { min-width:0; }
+.proxy-input .icon-button { flex-shrink:0; }
+.proxy-hint { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; overflow-wrap:anywhere; }
+.proxy-clear { padding:2px 0; border:0; background:transparent; color:inherit; text-decoration:underline; cursor:pointer; }
+.proxy-clear:disabled { cursor:default; opacity:.5; }
+.proxy-result { display:flex; align-items:flex-start; gap:8px; margin:8px 0 0; padding:9px 11px; border-radius:6px; background:#f4f5f3; font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
+.proxy-result svg { flex-shrink:0; margin-top:2px; }
+.proxy-result small { display:block; font-size:11px; }
+.proxy-result.success { color:#277044; background:#edf7ef; }
+.proxy-result.warning { color:#8a6200; background:#fff4cf; }
+.proxy-result.failure { color:#a43832; background:#fff0ef; }
+@media (pointer:coarse) { .update-available-badge { min-height:44px; } .proxy-input .icon-button { min-width:44px; min-height:44px; } .proxy-clear { min-height:44px; } }

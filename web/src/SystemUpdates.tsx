@@ -17,6 +17,7 @@ import { api, ApiError, errorMessage } from "./api";
 import type { Release, UpdateJob, UpdateStatus } from "./api";
 import { Badge, Button, ErrorBox, Field, Modal } from "./components";
 import type { Notice } from "./components";
+import type { UpdateCheck } from "./useUpdateCheck";
 
 const stages = [
   { id: "fetching", label: "获取源码" },
@@ -48,11 +49,15 @@ function dateLabel(value: string | number | null | undefined) {
 export function SystemUpdates({
   notify,
   onVersion,
+  updateCheck,
+  focusRequest,
 }: {
   notify: Notice;
   onVersion: (version: string) => void;
+  updateCheck: UpdateCheck;
+  focusRequest: number;
 }) {
-  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [status, setStatus] = useState<UpdateStatus | null>(updateCheck.status);
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -66,6 +71,22 @@ export function SystemUpdates({
   const followLogs = useRef(true);
   const versionCallback = useRef(onVersion);
   versionCallback.current = onVersion;
+  const section = useRef<HTMLElement>(null);
+  const { readStatus, checkLatest: requestLatest, acceptStatus: publishStatus } =
+    updateCheck;
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    const frame = window.requestAnimationFrame(() => {
+      section.current?.focus({ preventScroll: true });
+      section.current?.scrollIntoView({ block: "start", behavior: "instant" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusRequest]);
+
+  useEffect(() => {
+    if (updateCheck.status) acceptStatus(updateCheck.status);
+  }, [updateCheck.status]);
 
   function acceptStatus(value: UpdateStatus) {
     if (value.error && !value.job && isRunning(latestStatus.current?.job)) {
@@ -88,10 +109,14 @@ export function SystemUpdates({
 
   useEffect(() => {
     let cancelled = false;
-    let timer: number;
+    let timer: number | undefined;
+    let pending = false;
     async function poll() {
+      window.clearTimeout(timer);
+      if (cancelled || pending || document.hidden) return;
+      pending = true;
       try {
-        const value = await api<UpdateStatus>("/updates");
+        const value = await readStatus();
         if (cancelled) return;
         acceptStatus(value);
       } catch (failure) {
@@ -105,19 +130,24 @@ export function SystemUpdates({
         } else {
           setError(errorMessage(failure));
         }
+      } finally {
+        pending = false;
       }
-      if (!cancelled)
+      if (!cancelled && !document.hidden)
         timer = window.setTimeout(
           () => void poll(),
           isRunning(latestStatus.current?.job) ? 2500 : 15000,
         );
     }
+    const onVisibility = () => void poll();
+    document.addEventListener("visibilitychange", onVisibility);
     void poll();
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [pollRevision]);
+  }, [pollRevision, readStatus]);
 
   useEffect(() => {
     if (followLogs.current && logs.current)
@@ -128,7 +158,7 @@ export function SystemUpdates({
     setChecking(true);
     setError("");
     try {
-      acceptStatus(await api<UpdateStatus>("/updates/latest"));
+      acceptStatus(await requestLatest());
     } catch (failure) {
       setError(errorMessage(failure));
     } finally {
@@ -154,6 +184,7 @@ export function SystemUpdates({
         current_password: password,
       });
       acceptStatus(value);
+      publishStatus(value);
       setConfirmation(null);
       setPassword("");
       followLogs.current = true;
@@ -181,6 +212,9 @@ export function SystemUpdates({
 
   return (
     <section
+      ref={section}
+      id="system-updates"
+      tabIndex={-1}
       className="settings-section system-updates"
       aria-labelledby="updates-title"
     >

@@ -315,19 +315,39 @@ pub async fn accounts(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value>
         c.accounts
             .iter()
             .map(|a| {
-                let mut v = json!(a);
-                v.as_object_mut().unwrap().remove("api_key");
-                v["has_api_key"] = json!(!a.api_key.is_empty());
+                let mut v = public_account(&s, a);
                 v["runtime"] = json!(runtime.get(&a.id).cloned().unwrap_or_default());
                 v
             })
             .collect(),
     )))
 }
+fn public_account(state: &Shared, account: &Account) -> Value {
+    let mut out = json!(account);
+    out.as_object_mut().unwrap().remove("api_key");
+    out.as_object_mut().unwrap().remove("proxy_url");
+    out["has_api_key"] = json!(!account.api_key.is_empty());
+    out["has_proxy"] = json!(!account.proxy_url.is_empty());
+    out["proxy_display"] = json!(
+        state
+            .store
+            .unseal(&account.proxy_url)
+            .and_then(|url| crate::network::proxy_display(&url))
+            .unwrap_or_default()
+    );
+    out
+}
+#[derive(Deserialize)]
+pub struct AccountInput {
+    #[serde(flatten)]
+    account: Account,
+    #[serde(default)]
+    proxy_url: Option<String>,
+}
 pub async fn save_account(
     State(s): State<Shared>,
     h: HeaderMap,
-    Json(a): Json<Account>,
+    Json(a): Json<AccountInput>,
 ) -> ApiResult<Value> {
     save_account_impl(&s, &h, None, a)
 }
@@ -335,7 +355,7 @@ pub async fn save_account_id(
     State(s): State<Shared>,
     h: HeaderMap,
     Path(id): Path<String>,
-    Json(a): Json<Account>,
+    Json(a): Json<AccountInput>,
 ) -> ApiResult<Value> {
     save_account_impl(&s, &h, Some(id), a)
 }
@@ -343,9 +363,10 @@ fn save_account_impl(
     s: &Shared,
     h: &HeaderMap,
     path: Option<String>,
-    mut a: Account,
+    input: AccountInput,
 ) -> ApiResult<Value> {
     auth(s, h)?;
+    let mut a = input.account;
     name(&a.name)?;
     crate::proxy::upstream_url(&a.endpoint, "models")?;
     if a.protocols.is_empty()
@@ -383,6 +404,11 @@ fn save_account_impl(
     if !a.api_key.is_empty() {
         a.api_key = s.store.seal(&a.api_key)?;
     }
+    let preserve_proxy = input.proxy_url.is_none();
+    if let Some(value) = input.proxy_url.filter(|value| !value.is_empty()) {
+        let url = crate::network::validate_proxy(&value)?;
+        a.proxy_url = s.store.seal(url.as_str())?;
+    }
     s.store.update(|c| {
         if a.group_ids
             .iter()
@@ -399,6 +425,9 @@ fn save_account_impl(
             if a.api_key.is_empty() {
                 a.api_key = existing.api_key.clone();
             }
+            if preserve_proxy {
+                a.proxy_url = existing.proxy_url.clone();
+            }
             *existing = a.clone();
         } else {
             if a.api_key.is_empty() {
@@ -408,9 +437,8 @@ fn save_account_impl(
         }
         Ok(())
     })?;
-    let mut out = json!(a);
-    out.as_object_mut().unwrap().remove("api_key");
-    Ok(Json(out))
+    s.proxy_clients.lock().unwrap().remove(&a.id);
+    Ok(Json(public_account(s, &a)))
 }
 pub async fn delete_account(
     State(s): State<Shared>,
@@ -423,6 +451,7 @@ pub async fn delete_account(
         Ok(())
     })?;
     s.runtime.lock().unwrap().remove(&id);
+    s.proxy_clients.lock().unwrap().remove(&id);
     Ok(Json(json!({"ok":true})))
 }
 pub async fn keys(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
@@ -604,6 +633,8 @@ pub struct DiscoverInput {
     account_id: Option<String>,
     #[serde(default)]
     protocols: Option<Vec<String>>,
+    #[serde(default)]
+    proxy_url: Option<String>,
 }
 pub async fn discover(
     State(s): State<Shared>,
@@ -612,11 +643,13 @@ pub async fn discover(
 ) -> ApiResult<Value> {
     auth(&s, &h)?;
     let url = crate::proxy::upstream_url(&input.endpoint, "models")?;
-    let account = if input.api_key.is_empty() || input.protocols.is_none() {
+    let account = if input.account_id.is_some() {
         let c = s.store.config()?;
         c.accounts
             .into_iter()
             .find(|a| Some(&a.id) == input.account_id.as_ref())
+            .ok_or_else(|| bad("Account not found"))?
+            .into()
     } else {
         None
     };
@@ -634,10 +667,8 @@ pub async fn discover(
         .protocols
         .as_ref()
         .or_else(|| account.as_ref().map(|a| &a.protocols));
-    let request = s
-        .client
-        .get(url)
-        .timeout(std::time::Duration::from_secs(20));
+    let client = crate::network::selected_client(&s, account.as_ref(), input.proxy_url.as_deref())?;
+    let request = client.get(url).timeout(std::time::Duration::from_secs(20));
     let request = if protocols.is_some_and(|items| items.iter().any(|p| p == "anthropic")) {
         let request = request
             .header("x-api-key", &key)
@@ -694,6 +725,97 @@ pub async fn discover(
     models.sort();
     models.dedup();
     Ok(Json(json!({"models":models})))
+}
+#[derive(Deserialize)]
+pub struct ProxyTestInput {
+    #[serde(default)]
+    proxy_url: Option<String>,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    endpoint: Option<String>,
+    #[serde(default)]
+    api_key: String,
+    #[serde(default)]
+    protocols: Option<Vec<String>>,
+}
+pub async fn test_proxy(
+    State(s): State<Shared>,
+    h: HeaderMap,
+    Json(input): Json<ProxyTestInput>,
+) -> ApiResult<Value> {
+    auth(&s, &h)?;
+    let config = s.store.config()?;
+    let account = input
+        .account_id
+        .as_ref()
+        .map(|id| {
+            config
+                .accounts
+                .iter()
+                .find(|account| &account.id == id)
+                .ok_or_else(|| bad("Account not found"))
+        })
+        .transpose()?;
+    let proxy_url = match input.proxy_url {
+        Some(value) if !value.is_empty() => value,
+        None if account.is_some_and(|account| !account.proxy_url.is_empty()) => {
+            s.store.unseal(&account.unwrap().proxy_url)?
+        }
+        _ => return Err(bad("A SOCKS proxy URL is required for testing")),
+    };
+    let endpoint = input
+        .endpoint
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .or_else(|| account.map(|account| account.endpoint.as_str()))
+        .ok_or_else(|| bad("An upstream endpoint is required for testing"))?;
+    let url = crate::proxy::upstream_url(endpoint, "models")?;
+    let key = if input.api_key.is_empty() {
+        account
+            .map(|account| s.store.unseal(&account.api_key))
+            .transpose()?
+            .unwrap_or_default()
+    } else {
+        input.api_key
+    };
+    if key.len() > 4096 {
+        return Err(bad("API key is too large"));
+    }
+    let protocols = input
+        .protocols
+        .as_ref()
+        .or_else(|| account.map(|account| &account.protocols));
+    let started = std::time::Instant::now();
+    let client = crate::network::proxy_client(&proxy_url)?;
+    let mut request = client.get(url).timeout(std::time::Duration::from_secs(12));
+    if !key.is_empty() {
+        if protocols.is_some_and(|items| items.iter().any(|protocol| protocol == "anthropic")) {
+            request = request
+                .header("x-api-key", &key)
+                .header("anthropic-version", "2023-06-01");
+            if protocols.is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|protocol| matches!(protocol.as_str(), "responses" | "compact" | "chat"))
+            }) {
+                request = request.bearer_auth(&key);
+            }
+        } else {
+            request = request.bearer_auth(&key);
+        }
+    }
+    let result = request.send().await;
+    let latency_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    Ok(Json(match result {
+        Ok(response) => {
+            let status = response.status();
+            json!({"connected":true, "ok":status.is_success(), "latency_ms":latency_ms,
+                "upstream_status":status.as_u16(), "error":if status.is_success() {None} else {Some(format!("Proxy connected; upstream returned HTTP {}", status.as_u16()))}})
+        }
+        Err(error) => json!({"connected":false, "ok":false, "latency_ms":latency_ms,
+            "upstream_status":null, "error":crate::network::connection_error(&error)}),
+    }))
 }
 pub async fn profiles(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
     auth(&s, &h)?;

@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -24,6 +24,81 @@ const REPOSITORY: &str = "https://github.com/mizaawa/zakoai-proxy-cli.git";
 const RELEASE_API: &str = "https://api.github.com/repos/mizaawa/zakoai-proxy-cli/releases/latest";
 const IMAGE: &str = "ghcr.io/mizaawa/zakoai-proxy-cli:latest";
 const MAX_LOGS: usize = 150;
+const RELEASE_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+const RELEASE_RETRY_DELAY: Duration = Duration::from_secs(60);
+static RELEASE_CACHE: Mutex<ReleaseCache> = Mutex::const_new(ReleaseCache {
+    attempted_at: None,
+    result: None,
+    latest: None,
+});
+
+#[derive(Default)]
+struct ReleaseCache {
+    attempted_at: Option<Instant>,
+    result: Option<Result<Release, String>>,
+    latest: Option<Release>,
+}
+
+async fn fetch_release(client: &reqwest::Client, url: &str) -> Result<Release, String> {
+    let reply = client
+        .get(url)
+        .header("User-Agent", "ZakoAI-Updater")
+        .header("Accept", "application/vnd.github+json")
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|_| "GitHub release lookup failed".to_owned())?;
+    if !reply.status().is_success() {
+        return Err(format!("GitHub release lookup returned {}", reply.status()));
+    }
+    let bytes = reply
+        .bytes()
+        .await
+        .map_err(|_| "Invalid GitHub response".to_owned())?;
+    if bytes.len() > 512 * 1024 {
+        return Err("GitHub release response is too large".into());
+    }
+    parse_release(
+        &serde_json::from_slice(&bytes).map_err(|_| "Invalid GitHub response".to_owned())?,
+    )
+}
+
+async fn cached_release(
+    cache: &Mutex<ReleaseCache>,
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<Release, String> {
+    // Serialize lookups so multiple authenticated tabs share one GitHub request.
+    let mut cache = cache.lock().await;
+    if let (Some(attempted), Some(result)) = (cache.attempted_at, &cache.result) {
+        let ttl = if result.is_ok() {
+            RELEASE_CACHE_TTL
+        } else {
+            RELEASE_RETRY_DELAY
+        };
+        if attempted.elapsed() < ttl {
+            return result.clone();
+        }
+    }
+    let result = fetch_release(client, url).await;
+    cache.attempted_at = Some(Instant::now());
+    if let Ok(release) = &result {
+        cache.latest = Some(release.clone());
+    }
+    cache.result = Some(result.clone());
+    result
+}
+
+fn merge_release(state: &mut AgentStatus, latest: Option<Release>) {
+    if let Some(latest) = latest
+        && state
+            .latest
+            .as_ref()
+            .is_none_or(|existing| parse_tag(&latest.tag) >= parse_tag(&existing.tag))
+    {
+        state.latest = Some(latest);
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Release {
@@ -148,18 +223,38 @@ async fn helper(s: &Shared, path: &str, body: Option<Value>) -> Result<AgentStat
 }
 pub async fn status(State(s): State<Shared>, h: HeaderMap) -> ApiResult<UpdateStatus> {
     api::auth(&s, &h)?;
+    let latest = RELEASE_CACHE.lock().await.latest.clone();
     if helper_url()?.is_none() {
-        return Ok(Json(response(AgentStatus::default(), false, None)));
+        return Ok(Json(response(
+            AgentStatus { latest, job: None },
+            false,
+            None,
+        )));
     }
     match helper(&s, "status", None).await {
-        Ok(v) => Ok(Json(response(v, true, None))),
-        Err(e) => Ok(Json(response(AgentStatus::default(), true, Some(e.1)))),
+        Ok(mut value) => {
+            merge_release(&mut value, latest);
+            Ok(Json(response(value, true, None)))
+        }
+        Err(e) => Ok(Json(response(
+            AgentStatus { latest, job: None },
+            true,
+            Some(e.1),
+        ))),
     }
 }
 pub async fn latest(State(s): State<Shared>, h: HeaderMap) -> ApiResult<UpdateStatus> {
     api::auth(&s, &h)?;
-    let state = helper(&s, "latest", None).await?;
-    Ok(Json(response(state, true, None)))
+    let latest = cached_release(&RELEASE_CACHE, &s.client, RELEASE_API)
+        .await
+        .map_err(|error| ApiError(StatusCode::BAD_GATEWAY, error))?;
+    let mut value = status(State(s), h).await?.0;
+    let mut state = AgentStatus {
+        latest: value.latest.take(),
+        job: value.job.take(),
+    };
+    merge_release(&mut state, Some(latest));
+    Ok(Json(response(state, value.configured, value.error)))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -426,26 +521,7 @@ impl Agent {
         }
     }
     async fn fetch_release(&self) -> Result<Release, String> {
-        let reply = self
-            .client
-            .get(RELEASE_API)
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await
-            .map_err(|_| "GitHub release lookup failed".to_owned())?;
-        if !reply.status().is_success() {
-            return Err(format!("GitHub release lookup returned {}", reply.status()));
-        }
-        let bytes = reply
-            .bytes()
-            .await
-            .map_err(|_| "Invalid GitHub response".to_owned())?;
-        if bytes.len() > 512 * 1024 {
-            return Err("GitHub release response is too large".into());
-        }
-        parse_release(
-            &serde_json::from_slice(&bytes).map_err(|_| "Invalid GitHub response".to_owned())?,
-        )
+        fetch_release(&self.client, RELEASE_API).await
     }
     async fn command(
         &self,
@@ -1320,6 +1396,57 @@ mod tests {
     use axum::{body::Body, http::Request, response::IntoResponse};
     use tower::ServiceExt;
 
+    #[tokio::test]
+    async fn release_checks_share_cache_and_preserve_last_success_on_failure() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let requests = Arc::new(AtomicUsize::new(0));
+        let calls = requests.clone();
+        let router = Router::new().route(
+            "/latest",
+            get(move || {
+                let calls = calls.clone();
+                async move {
+                    let count = calls.fetch_add(1, Ordering::Relaxed);
+                    if count > 0 {
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
+                    Json(json!({
+                        "tag_name": "v999.0.0", "draft": false, "prerelease": false,
+                        "html_url": "https://github.com/mizaawa/zakoai-proxy-cli/releases/tag/v999.0.0"
+                    })).into_response()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/latest", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let cache = Mutex::new(ReleaseCache::default());
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let (first, second) = tokio::join!(
+            cached_release(&cache, &client, &url),
+            cached_release(&cache, &client, &url)
+        );
+        assert_eq!(first.unwrap().tag, "v999.0.0");
+        assert_eq!(second.unwrap().tag, "v999.0.0");
+        assert_eq!(requests.load(Ordering::Relaxed), 1);
+        cache.lock().await.attempted_at = Some(Instant::now() - RELEASE_CACHE_TTL);
+        assert!(cached_release(&cache, &client, &url).await.is_err());
+        assert!(cached_release(&cache, &client, &url).await.is_err());
+        assert_eq!(requests.load(Ordering::Relaxed), 2);
+        let status = response(
+            AgentStatus {
+                latest: cache.lock().await.latest.clone(),
+                job: None,
+            },
+            false,
+            None,
+        );
+        assert!(!status.configured);
+        assert!(status.update_available);
+        assert_eq!(status.latest.unwrap().tag, "v999.0.0");
+        task.abort();
+    }
+
     const OLD_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const NEW_ID: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     struct DockerFixture {
@@ -1640,6 +1767,17 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/updates")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/updates/latest")
                     .body(Body::empty())
                     .unwrap(),
             )
