@@ -40,8 +40,8 @@ You are solely responsible for complying with the laws and regulations of your j
 需要 Docker Engine / Docker Desktop 和 Docker Compose v2：
 
 ```sh
-git clone https://github.com/mizaawa/zakoai-proxy-cli.git
-cd zakoai-proxy-cli
+git clone https://github.com/mizaawa/ZakoProxyCLI.git
+cd ZakoProxyCLI
 docker compose pull
 docker compose build --pull
 docker compose up -d --no-build
@@ -81,6 +81,20 @@ Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。�
 源码构建成功后，更新器先停止代理并备份完整数据，再启动新镜像；部署或健康检查失败时恢复旧版本及同一次数据备份。更新状态和备份保留在 `update-state` 数据卷中，不能代替异地备份。账号、API key、分组、统计和 `master.key` 随数据卷保留。更新只接受官方仓库的正式版本标签，不支持输入任意地址或执行命令。
 
 旧版部署需先拉取本版本源码并执行一次上述 Compose 构建和启动命令，以安装更新器。使用自定义 Compose 项目名时，保持 `COMPOSE_PROJECT_NAME` 一致；不使用 Compose 或未配置更新器的本地开发环境只展示版本信息，不能在网页执行更新。更新代理镜像不会自行替换更新器或修改宿主机 Compose 文件；发布说明要求调整部署配置时仍需由管理员执行。
+
+### v0.6.0 仓库改名后的首次升级
+
+官方仓库已改名为 ZakoProxyCLI。v0.5.0 及更早版本的更新器严格匹配旧 Release URL，因此仓库改名后网页检查或更新可能失败。请在原部署目录执行一次以下操作，同时替换 proxy 和 updater；保持原目录、Compose 项目名和数据卷不变。若本地修改导致拉取失败，请先处理冲突。
+
+```sh
+git remote set-url origin https://github.com/mizaawa/ZakoProxyCLI.git
+git pull --ff-only origin main
+docker compose build --pull
+docker compose up -d --no-build
+docker compose ps
+```
+
+镜像仍发布至 ghcr.io/mizaawa/zakoai-proxy-cli，保持现有部署兼容。v0.6.0 识别新旧官方 Release URL；本次首次迁移不能依赖旧更新器自动完成。
 
 ## 配置中转
 

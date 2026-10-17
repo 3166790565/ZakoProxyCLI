@@ -17,8 +17,8 @@ A self-hosted Rust Responses / Chat Completions / Anthropic Messages API relay w
 Requires Docker Engine/Desktop with Docker Compose v2. Build from the repository:
 
 ```sh
-git clone https://github.com/mizaawa/zakoai-proxy-cli.git
-cd zakoai-proxy-cli
+git clone https://github.com/mizaawa/ZakoProxyCLI.git
+cd ZakoProxyCLI
 docker compose pull
 docker compose build --pull
 docker compose up -d --no-build
@@ -58,6 +58,20 @@ Compose also runs an isolated `updater` service with no published host port. The
 After a successful build, the updater stops the proxy, backs up its complete data directory, and starts the new image. Failed deployment or health checks restore the previous version and its matching data backup. Update state and backups persist in `update-state`; they do not replace an off-host backup. Accounts, API keys, groups, statistics, and `master.key` remain in the data volume. Only stable tags from the fixed official repository are accepted, not arbitrary URLs or commands.
 
 Existing installations must first pull this source version and run the Compose build/start commands above once to install the updater. Keep `COMPOSE_PROJECT_NAME` consistent when using a custom project name. Without an updater, such as in local development, the console shows version information but cannot execute updates. Updating the proxy image does not replace the updater itself or change the host's Compose file; deployment changes called out in release notes still require administrator action.
+
+### First Upgrade After The v0.6.0 Repository Rename
+
+The official repository is now ZakoProxyCLI. The updater in v0.5.0 and earlier strictly matches the old Release URL, so console checks or updates may fail after the rename. Run the following once from the existing deployment directory to replace both proxy and updater. Keep the directory, Compose project name, and named volumes unchanged. Resolve local changes first if the pull cannot fast-forward.
+
+```sh
+git remote set-url origin https://github.com/mizaawa/ZakoProxyCLI.git
+git pull --ff-only origin main
+docker compose build --pull
+docker compose up -d --no-build
+docker compose ps
+```
+
+Images retain ghcr.io/mizaawa/zakoai-proxy-cli for existing deployments. v0.6.0 accepts both exact official Release URL paths; the old updater cannot automatically perform this initial migration.
 
 ## Configure The Relay
 

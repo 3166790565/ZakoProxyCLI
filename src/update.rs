@@ -20,8 +20,8 @@ use tokio::{
     sync::Mutex,
 };
 
-const REPOSITORY: &str = "https://github.com/mizaawa/zakoai-proxy-cli.git";
-const RELEASE_API: &str = "https://api.github.com/repos/mizaawa/zakoai-proxy-cli/releases/latest";
+const REPOSITORY: &str = "https://github.com/mizaawa/ZakoProxyCLI.git";
+const RELEASE_API: &str = "https://api.github.com/repos/mizaawa/ZakoProxyCLI/releases/latest";
 const IMAGE: &str = "ghcr.io/mizaawa/zakoai-proxy-cli:latest";
 const MAX_LOGS: usize = 150;
 const RELEASE_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
@@ -1165,14 +1165,16 @@ fn parse_release(value: &Value) -> Result<Release, String> {
     {
         return Err("Only canonical stable official releases are supported".into());
     }
-    let url = format!("https://github.com/mizaawa/zakoai-proxy-cli/releases/tag/{tag}");
-    if value["html_url"].as_str() != Some(&url) {
+    let canonical_url = format!("https://github.com/mizaawa/ZakoProxyCLI/releases/tag/{tag}");
+    let legacy_url = format!("https://github.com/mizaawa/zakoai-proxy-cli/releases/tag/{tag}");
+    let url = value["html_url"].as_str().unwrap_or_default();
+    if url != canonical_url && url != legacy_url {
         return Err("Release URL does not match the official repository".into());
     }
     Ok(Release {
         tag: tag.into(),
         version: tag[1..].into(),
-        url,
+        url: url.into(),
         published_at: value["published_at"].as_str().unwrap_or("").into(),
         notes: value["body"]
             .as_str()
@@ -1874,15 +1876,32 @@ mod tests {
     #[test]
     fn rejects_nonofficial_and_prerelease_metadata() {
         let mut release = json!({"tag_name":"v1.2.3","draft":false,"prerelease":false,"html_url":"https://github.com/mizaawa/zakoai-proxy-cli/releases/tag/v1.2.3","body":"notes"});
-        assert_eq!(parse_release(&release).unwrap().version, "1.2.3");
+        for url in [
+            "https://github.com/mizaawa/zakoai-proxy-cli/releases/tag/v1.2.3",
+            "https://github.com/mizaawa/ZakoProxyCLI/releases/tag/v1.2.3",
+        ] {
+            release["html_url"] = json!(url);
+            let parsed = parse_release(&release).unwrap();
+            assert_eq!(parsed.version, "1.2.3");
+            assert_eq!(parsed.url, url);
+        }
         release["draft"] = json!(true);
         assert!(parse_release(&release).is_err());
         release["draft"] = json!(false);
         release["prerelease"] = json!(true);
         assert!(parse_release(&release).is_err());
         release["prerelease"] = json!(false);
-        release["html_url"] = json!("https://evil.invalid/");
-        assert!(parse_release(&release).is_err());
+        for url in [
+            "https://evil.invalid/",
+            "https://github.com/other/ZakoProxyCLI/releases/tag/v1.2.3",
+            "https://github.com/mizaawa/ZakoProxyCLI/releases/tag/v1.2.4",
+            "https://github.com/mizaawa/ZakoProxyCLI/releases/tag/v1.2.3?download=1",
+            "https://github.com/mizaawa/ZakoProxyCLI/releases/tag/v1.2.3#fragment",
+            "https://github.com.evil.invalid/mizaawa/ZakoProxyCLI/releases/tag/v1.2.3",
+        ] {
+            release["html_url"] = json!(url);
+            assert!(parse_release(&release).is_err(), "{url}");
+        }
     }
     #[test]
     fn replacement_preserves_runtime_contract() {
