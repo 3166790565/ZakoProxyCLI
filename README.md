@@ -82,6 +82,10 @@ Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。�
 
 旧版部署需先拉取本版本源码并执行一次上述 Compose 构建和启动命令，以安装更新器。使用自定义 Compose 项目名时，保持 `COMPOSE_PROJECT_NAME` 一致；不使用 Compose 或未配置更新器的本地开发环境只展示版本信息，不能在网页执行更新。更新代理镜像不会自行替换更新器或修改宿主机 Compose 文件；发布说明要求调整部署配置时仍需由管理员执行。
 
+### v0.8.0 DeepSeek API 兼容策略
+
+为全部五个 DeepSeek 精确模型档案组合一层共享的 API 适配提示，吸收 dsh-purge 的请求期提示组装与上下文连续性思路；策略仍按映射后的实际模型选择，并沿用现有 Responses / Compact、Chat Completions 和 Anthropic 注入链路。原 profile ID 与旧版配置识别规则保留，模型目录数量不变。适配层以当前请求实际携带的消息、工具和结果为准，不假设 Harness 本地文件、hook、审批、沙箱、跨请求记忆或权限，也不声称修改上游模型策略。来源版本、改编范围和 MIT 声明见 [profiles/dsh-purge/SOURCE.json](profiles/dsh-purge/SOURCE.json) 与 [third_party/dsh-purge/NOTICE.md](third_party/dsh-purge/NOTICE.md)。
+
 ### v0.7.0 调用日志与请求链路修复
 
 密钥管理下新增独立调用日志，默认保留最近 7 天，每页 20 条，支持分页跳页、JSON 导出、清空日志、状态码和结构化 JSON/SSE 错误详情，并记录首字耗时及缓存读写 Token；仪表盘不再重复展示调用日志。Responses / Chat 流式工具请求现在在确认终止事件后及时释放并发槽；正常的长度限制或内容过滤不会误判为账号故障。账号冷却返回带真实剩余时间的 503，RPM 和并发本地限制保留 429，并提供机器可读错误原因。真实上游的 HTTP 状态、脱敏错误正文及 Retry-After 继续透传。
