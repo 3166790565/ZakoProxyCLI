@@ -104,7 +104,7 @@ The default strategy adapts task-execution and continuation mechanisms from the 
 | Claude | `claude-fable-5`, `claude-fable-5-1`, `claude-haiku-4-5`, `claude-haiku-5-5`, `claude-opus-4-5`, `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`, `claude-sonnet-4-5`, `claude-sonnet-4-6`, `claude-sonnet-5`, `claude-sonnet-5-5` |
 | Grok | `grok-4.7` |
 | Gemini | `gemini-3-flash`, `gemini-3.1-flash-image`, `gemini-3.1-pro`, `gemini-3.1-pro-preview`, `gemini-3.6-flash`, `gemini-3.7-flash`, `gemini-3.8-flash` |
-| DeepSeek | `deepseek-v4-flash`, `deepseek-v4-flash-0731`, `deepseek-v4-pro`, `deepseek-v4-pro-0813`, `deepseek-v4.1-flash` / `deepseek-4.1-flash` / `deepseek-flash` (the first two share the existing Hanshuang profile; the last has a separate Hanshuang profile) |
+| DeepSeek | `deepseek-v4-flash`, `deepseek-v4-flash-0731`, `deepseek-v4-pro`, `deepseek-v4-pro-0813`, `deepseek-v4.1-flash` / `deepseek-4.1-flash` / `deepseek-flash` (`deepseek-v4.1-flash` and `deepseek-4.1-flash` share the historical profile; `deepseek-flash` has a separate Hanshuang profile) |
 | GLM | `glm-5.3` |
 | Kimi | `kimi-k3`, `kimi-k2.7`, `kimi-k2.7-code`, `kimi-k2.6` |
 
