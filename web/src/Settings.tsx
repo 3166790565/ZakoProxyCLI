@@ -35,6 +35,8 @@ export function SettingsPage({
   const [securityEnabled, setSecurityEnabled] = useState(
     !!state.settings.security_path,
   );
+  const [turnstileSecret, setTurnstileSecret] = useState("");
+  const [turnstileClear, setTurnstileClear] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -49,6 +51,7 @@ export function SettingsPage({
       security_path: securityEnabled
         ? form.security_path.replace(/^\/+|\/+$/g, "")
         : "",
+      turnstile_secret_key: turnstileClear ? "" : turnstileSecret || undefined,
     }) !== JSON.stringify(state.settings);
   const entry = `${window.location.origin}/${state.settings.security_path || ""}`;
   function update<K extends keyof Settings>(key: K, value: Settings[K]) {
@@ -66,10 +69,18 @@ export function SettingsPage({
     }
     setBusy(true);
     try {
-      await api("/settings", "PUT", { ...form, security_path: securityPath });
+      const saved = await api<Settings>("/settings", "PUT", {
+        ...form,
+        security_path: securityPath,
+        turnstile_secret_key: turnstileClear
+          ? ""
+          : turnstileSecret || undefined,
+      });
       window.history.replaceState(null, "", `/${securityPath}`);
       await reload();
-      setForm({ ...form, security_path: securityPath });
+      setForm(saved);
+      setTurnstileSecret("");
+      setTurnstileClear(false);
       notify("系统设置已保存");
     } catch (failure) {
       setError(errorMessage(failure));
@@ -180,6 +191,62 @@ export function SettingsPage({
                   title="复制控制台入口"
                 />
               </div>
+              <div className="setting-toggle-row">
+                <span>
+                  <strong>Cloudflare Turnstile</strong>
+                  <small>
+                    {state.settings.turnstile_enabled
+                      ? "Cloudflare Turnstile 已启用"
+                      : "登录时进行人机安全校验"}
+                  </small>
+                </span>
+                <Badge
+                  variant={state.settings.turnstile_enabled ? "green" : "neutral"}
+                  dot
+                >
+                  {state.settings.turnstile_enabled
+                    ? "Cloudflare Turnstile 已启用"
+                    : "Cloudflare Turnstile 未启用"}
+                </Badge>
+              </div>
+              <Field label="Cloudflare Turnstile 站点密钥" hint="用于显示登录安全校验组件">
+                <input
+                  value={form.turnstile_site_key}
+                  onChange={(event) => update("turnstile_site_key", event.target.value)}
+                  placeholder="0x4AAAAAAA..."
+                  maxLength={256}
+                />
+              </Field>
+              <Field
+                label="Cloudflare Turnstile 密钥"
+                hint={
+                  state.settings.turnstile_enabled
+                    ? "已保存密钥；输入新值可替换"
+                    : "保存后登录将强制进行安全校验"
+                }
+              >
+                <input
+                  type="password"
+                  value={turnstileSecret}
+                  onChange={(event) => {
+                    setTurnstileSecret(event.target.value);
+                    setTurnstileClear(false);
+                  }}
+                  placeholder={state.settings.turnstile_enabled ? "已配置" : "输入 Secret Key"}
+                  maxLength={512}
+                />
+              </Field>
+              {state.settings.turnstile_enabled && (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setTurnstileClear(true);
+                    setTurnstileSecret("");
+                  }}
+                >
+                  清除 Cloudflare Turnstile
+                </Button>
+              )}
             </div>
           </section>
           <section className="settings-section">

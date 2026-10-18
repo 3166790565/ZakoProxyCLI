@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -10,7 +11,7 @@ import {
 } from "lucide-react";
 import { api, errorMessage, number, tokenCount } from "./api";
 import type { RequestLog, RequestLogExport, RequestLogPage, State } from "./api";
-import { Badge, Button, Confirm, Empty, ErrorBox, Select } from "./components";
+import { Badge, Button, Confirm, Empty, ErrorBox } from "./components";
 import type { Notice } from "./components";
 
 function duration(milliseconds: number | null | undefined) {
@@ -46,6 +47,181 @@ function Metric({
     <span className={`log-metric log-metric-${tone}`} title={title}>
       <span>{label}</span>
       <strong>{value}</strong>
+    </span>
+  );
+}
+
+function LogPageSelect({
+  page,
+  totalPages,
+  disabled,
+  onChange,
+}: {
+  page: number;
+  totalPages: number;
+  disabled: boolean;
+  onChange: (page: number) => void;
+}) {
+  const id = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const search = useRef({ text: "", time: 0 });
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(Math.max(0, page - 1));
+  const unavailable = disabled || totalPages < 1;
+
+  function positionMenu() {
+    const button = trigger.current;
+    const popup = menu.current;
+    if (!button || !popup) return;
+    const rect = button.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const viewTop = viewport?.offsetTop ?? 0;
+    const viewLeft = viewport?.offsetLeft ?? 0;
+    const viewHeight = viewport?.height ?? window.innerHeight;
+    const viewWidth = viewport?.width ?? window.innerWidth;
+    const desiredHeight = Math.min(300, totalPages * 36 + 42);
+    const below = viewTop + viewHeight - rect.bottom - 14;
+    const above = rect.top - viewTop - 14;
+    const upward = below < desiredHeight && above > below;
+    const height = Math.min(desiredHeight, Math.max(80, upward ? above : below));
+    const width = Math.min(Math.max(rect.width, 190), viewWidth - 24);
+    popup.style.width = `${width}px`;
+    popup.style.maxHeight = `${height}px`;
+    popup.style.left = `${Math.max(viewLeft + 12, Math.min(rect.left, viewLeft + viewWidth - width - 12))}px`;
+    popup.style.top = `${upward ? Math.max(viewTop + 12, rect.top - height - 6) : rect.bottom + 6}px`;
+  }
+
+  function close() {
+    menu.current?.hidePopover();
+    setOpen(false);
+  }
+
+  function show(index = Math.min(totalPages - 1, Math.max(0, page - 1))) {
+    if (unavailable) return;
+    setActive(index);
+    positionMenu();
+    menu.current?.showPopover();
+    setOpen(true);
+  }
+
+  function choose(index: number) {
+    if (index < 0 || index >= totalPages) return;
+    onChange(index + 1);
+    close();
+    trigger.current?.focus();
+  }
+
+  useEffect(() => {
+    setActive(Math.min(totalPages - 1, Math.max(0, page - 1)));
+  }, [page, totalPages]);
+
+  useEffect(() => {
+    if (!open) return;
+    const reposition = () => positionMenu();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    window.visualViewport?.addEventListener("resize", reposition);
+    window.visualViewport?.addEventListener("scroll", reposition);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+      window.visualViewport?.removeEventListener("resize", reposition);
+      window.visualViewport?.removeEventListener("scroll", reposition);
+    };
+  }, [open, totalPages]);
+
+  useEffect(() => {
+    if (open) menu.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active, open]);
+
+  useEffect(() => {
+    if (unavailable && open) close();
+  }, [unavailable, open]);
+
+  function onKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (unavailable) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) show();
+      else setActive((index) => (index + (event.key === "ArrowDown" ? 1 : -1) + totalPages) % totalPages);
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      const index = event.key === "Home" ? 0 : totalPages - 1;
+      if (!open) show(index);
+      else setActive(index);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (open) choose(active);
+      else show();
+    } else if (event.key === "Escape" && open) {
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    } else if (event.key === "Tab") {
+      close();
+    } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const now = Date.now();
+      const text = (now - search.current.time < 700 ? search.current.text : "") + event.key;
+      search.current = { text, time: now };
+      const index = Array.from({ length: totalPages }, (_, pageIndex) => String(pageIndex + 1)).findIndex((value) => value.startsWith(text));
+      if (index >= 0) {
+        event.preventDefault();
+        if (open) setActive(index);
+        else show(index);
+      }
+    }
+  }
+
+  return (
+    <span className="log-page-select">
+      <button
+        ref={trigger}
+        type="button"
+        className={`log-page-select-trigger${open ? " is-open" : ""}`}
+        role="combobox"
+        aria-label="跳转到页码"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={`${id}-list`}
+        aria-activedescendant={open ? `${id}-option-${active}` : undefined}
+        disabled={unavailable}
+        onKeyDown={onKeyDown}
+        onClick={() => open ? close() : show()}
+      >
+        <span className="log-page-select-current">第 <strong>{Math.min(page, totalPages)}</strong> 页</span>
+        <span className="log-page-select-total">共 {totalPages} 页</span>
+        <ChevronDown size={15} className="log-page-select-chevron" aria-hidden="true" />
+      </button>
+      <div
+        ref={menu}
+        id={`${id}-list`}
+        className="log-page-select-menu"
+        popover="auto"
+        role="listbox"
+        aria-label="选择页码"
+        onToggle={(event) => setOpen(event.currentTarget.matches(":popover-open"))}
+      >
+        <div className="log-page-select-heading" role="presentation">
+          <span>选择页码</span><span>{totalPages} 页</span>
+        </div>
+        {Array.from({ length: totalPages }, (_, index) => (
+          <div
+            id={`${id}-option-${index}`}
+            key={index + 1}
+            role="option"
+            aria-selected={index + 1 === page}
+            data-index={index}
+            className={`log-page-select-option${index === active ? " is-active" : ""}`}
+            onPointerMove={() => setActive(index)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => choose(index)}
+          >
+            <span>第 {index + 1} 页</span><small>/ 共 {totalPages} 页</small>
+            {index + 1 === page && <Check size={15} strokeWidth={2.3} aria-hidden="true" />}
+          </div>
+        ))}
+      </div>
     </span>
   );
 }
@@ -282,12 +458,12 @@ export function RequestLogs({
             <Button disabled={busy || !!error || page <= 1} onClick={() => setPage((value) => value - 1)}>
               <ChevronLeft size={15} />上一页
             </Button>
-            <label className="log-page-select">
-              <span className="visually-hidden">跳转到页码</span>
-              <Select aria-label="跳转到页码" value={Math.min(page, totalPages)} disabled={busy || !!error || !total} onChange={(event) => setPage(Number(event.target.value))}>
-                {Array.from({ length: totalPages }, (_, index) => <option key={index + 1} value={index + 1}>第 {index + 1} 页 / 共 {totalPages} 页</option>)}
-              </Select>
-            </label>
+            <LogPageSelect
+              page={Math.min(page, totalPages)}
+              totalPages={totalPages}
+              disabled={busy || !!error || !total}
+              onChange={setPage}
+            />
             <Button disabled={busy || !!error || page >= totalPages} onClick={() => setPage((value) => value + 1)}>
               下一页<ChevronRight size={15} />
             </Button>

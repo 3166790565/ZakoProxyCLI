@@ -145,6 +145,10 @@ pub struct ApiKey {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub security_path: String,
+    #[serde(default)]
+    pub turnstile_site_key: String,
+    #[serde(default)]
+    pub turnstile_secret_key: String,
     pub max_retries: u32,
     pub failure_threshold: u32,
     pub cooldown_seconds: u32,
@@ -155,6 +159,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             security_path: String::new(),
+            turnstile_site_key: String::new(),
+            turnstile_secret_key: String::new(),
             max_retries: 2,
             failure_threshold: 2,
             cooldown_seconds: 60,

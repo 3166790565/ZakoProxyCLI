@@ -82,6 +82,10 @@ Images retain ghcr.io/mizaawa/zakoai-proxy-cli for existing deployments. v0.6.0 
 
 For example, the account configuration fragment `{"models":["gpt-6-astra"],"model_mappings":{"chat-main":"gpt-6-astra"}}` accepts a client request for `chat-main` and sends `model: "gpt-6-astra"` upstream. Selecting the group's `gpt-6-astra` strategy applies that actual model's profile, not a profile for the alias. An unmapped request for `gpt-6-astra` still uses that same actual model. These mapping and profile matching rules apply to every supported protocol.
 
+### v0.9.0 Turnstile Security and Log Statistics Improvements
+
+System settings can configure Cloudflare Turnstile site and secret keys for login challenges; the secret is encrypted at rest and never returned by the API. The request-log paginator now supports keyboard navigation and touch-friendly controls, dashboard counts use compact formatting for large values, and coverage includes Cyber statistics beyond one thousand events.
+
 ### v0.8.0 DeepSeek API Compatibility Profiles
 
 A shared API adapter is now composed into all five exact DeepSeek model profiles, adapting dsh-purge's request-time prompt composition and context-continuity concepts to the relay. Profile selection still uses the mapped actual model and the existing Responses / Compact, Chat Completions, and Anthropic injection paths. Existing profile IDs and legacy preset recognition remain intact, and the catalog count is unchanged. The adapter uses only messages, tools, and results present in the current request; it assumes no Harness-local files, hooks, approvals, sandbox controls, cross-request memory, or permissions, and does not claim to change upstream model policy. See [profiles/dsh-purge/SOURCE.json](profiles/dsh-purge/SOURCE.json) and [third_party/dsh-purge/NOTICE.md](third_party/dsh-purge/NOTICE.md) for provenance, adaptation scope, and the MIT notice.

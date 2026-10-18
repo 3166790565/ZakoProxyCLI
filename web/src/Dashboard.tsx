@@ -26,7 +26,7 @@ import {
 } from "recharts";
 import {
   api,
-  compact,
+  compactCount,
   emptyStats,
   errorMessage,
   number,
@@ -334,8 +334,8 @@ export function Dashboard({
           </span>
           <span>
             Cyber 事件
-            <strong>
-              {number(summary.cyber_count)}
+            <strong title={number(summary.cyber_count)}>
+              {compactCount(summary.cyber_count)}
               <small>次</small>
             </strong>
           </span>
@@ -415,7 +415,7 @@ export function Dashboard({
                   dy={8}
                 />
                 <YAxis
-                  tickFormatter={metric === "tokens" ? tokenCount : compact}
+                  tickFormatter={metric === "tokens" ? tokenCount : compactCount}
                   tick={{ fontSize: 11, fill: "#929a97" }}
                   axisLine={false}
                   tickLine={false}
@@ -436,7 +436,7 @@ export function Dashboard({
                         {tokenCount(Number(value || 0))}
                       </span>
                     ) : (
-                      number(Number(value || 0))
+                      compactCount(Number(value || 0))
                     )
                   }
                   labelStyle={{ color: "#65716c", marginBottom: 7 }}

@@ -2591,6 +2591,9 @@ td strong {
   gap: 21px;
   margin-top: 35px;
 }
+.turnstile-widget {
+  min-height: 65px;
+}
 .auth-form input {
   height: 43px;
   font-size: 13px;
@@ -4299,7 +4302,54 @@ td {
 .log-pagination-count { color: #89958d; font-size: 11px; }
 .log-pagination-controls { display: flex; align-items: center; gap: 8px; }
 .log-pagination-controls .button { font-size: 11px; min-height: 34px; padding: 7px 10px; }
-.log-page-select select { height: 34px; font-size: 11px; }
+.log-page-select { display: block; min-width: 0; }
+.log-page-select-trigger {
+  display: flex; align-items: center; gap: 8px; min-width: 174px; height: 34px;
+  padding: 6px 9px 6px 11px; border: 1px solid #d7e4db; border-radius: 7px;
+  background: linear-gradient(180deg, #fff 0%, #f8fbf9 100%); color: #40594b;
+  text-align: left; font-size: 11px; line-height: 20px; cursor: pointer;
+  touch-action: manipulation; transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.log-page-select-trigger > span { white-space: nowrap; }
+.log-page-select-current { color: #246c54; }
+.log-page-select-current strong { font-weight: 700; font-variant-numeric: tabular-nums; }
+.log-page-select-total { color: #91a097; font-variant-numeric: tabular-nums; }
+.log-page-select-chevron { flex-shrink: 0; margin-left: auto; color: #729281; transition: transform .15s ease; }
+.log-page-select-trigger:focus-visible, .log-page-select-trigger.is-open {
+  outline: none; border-color: #56a28a; box-shadow: 0 0 0 3px #24846712;
+}
+.log-page-select-trigger.is-open { background: #f5faf7; }
+.log-page-select-trigger.is-open .log-page-select-chevron { transform: rotate(180deg); }
+.log-page-select-trigger:disabled { background: #f6f8f5; color: #9ba79c; cursor: not-allowed; }
+.log-page-select-menu {
+  position: fixed; inset: auto; margin: 0; box-sizing: border-box; padding: 5px;
+  border: 1px solid #dce7dd; border-radius: 9px; background: #fff; color: #425b4d;
+  box-shadow: 0 12px 32px #19392b1c, 0 2px 6px #19392b0d;
+  overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: #c5d4c9 transparent;
+}
+.log-page-select-menu::backdrop { background: transparent; }
+.log-page-select-heading {
+  display: flex; justify-content: space-between; gap: 12px; padding: 5px 8px 7px;
+  color: #8b9c8f; font-size: 10px; line-height: 1.5;
+}
+.log-page-select-heading > span:last-child { font-variant-numeric: tabular-nums; }
+.log-page-select-option {
+  display: flex; align-items: baseline; gap: 4px; min-height: 34px; padding: 7px 8px;
+  border-radius: 5px; font-size: 11px; line-height: 20px; cursor: pointer;
+  touch-action: manipulation; user-select: none;
+}
+.log-page-select-option + .log-page-select-option { margin-top: 2px; }
+.log-page-select-option > span { color: #425b4d; font-variant-numeric: tabular-nums; }
+.log-page-select-option > small { color: #9aa79e; font-size: 10px; font-variant-numeric: tabular-nums; }
+.log-page-select-option > svg { flex-shrink: 0; margin-left: auto; color: #268669; }
+.log-page-select-option[aria-selected="true"] { color: #167b5e; background: #edf6f0; font-weight: 550; }
+.log-page-select-option[aria-selected="true"] > span { color: #167b5e; }
+.log-page-select-option.is-active { background: #f0f5f0; }
+.log-page-select-option[aria-selected="true"].is-active { background: #e5f2e9; }
+@media (hover: hover) and (pointer: fine) {
+  .log-page-select-trigger:hover:not(:disabled) { border-color: #83ab95; }
+}
 @media (hover: hover) and (pointer: fine) {
   .request-log-summary:hover { background: #f7faf8; }
 }
@@ -4331,11 +4381,12 @@ td {
   .log-pagination-controls { width: 100%; gap: 6px; }
   .log-page-select { flex: 1; }
   .log-pagination-controls .button { white-space: nowrap; padding: 7px 8px; }
-  .log-page-select select { padding-left: 8px; font-size: 10px; }
+  .log-page-select-trigger { width: 100%; min-width: 0; padding-left: 8px; font-size: 10px; }
 }
 @media (pointer: coarse) {
   .log-pagination-controls .button,
-  .log-page-select select,
+  .log-page-select-trigger,
   .log-page-heading .button { min-height: 44px; }
-  .log-page-select select { font-size: 16px; }
+  .log-page-select-trigger { font-size: 16px; }
+  .log-page-select-option { min-height: 44px; }
 }

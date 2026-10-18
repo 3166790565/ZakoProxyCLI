@@ -409,3 +409,51 @@ async fn historical_cached_counts_populate_new_read_metrics_and_keep_explicit_ze
     .unwrap();
     assert_eq!(explicit.usage.cache_read_input_tokens, 0);
 }
+
+#[tokio::test]
+async fn stats_count_cyber_events_beyond_one_thousand() {
+    let (dir, state) = fixture();
+    let timestamp = now();
+    let db = Connection::open(dir.path().join("zako.db")).unwrap();
+    let tx = db.unchecked_transaction().unwrap();
+    {
+        let mut insert = tx
+            .prepare("INSERT INTO requests(id,timestamp,value) VALUES(?1,?2,?3)")
+            .unwrap();
+        for index in 0..1_105 {
+            let entry = RequestLog {
+                id: format!("cyber-{index}"),
+                timestamp,
+                status: 200,
+                cyber: true,
+                ..Default::default()
+            };
+            let id = entry.id.clone();
+            let value = serde_json::to_string(&entry).unwrap();
+            insert.execute(params![id, timestamp, value]).unwrap();
+        }
+    }
+    tx.commit().unwrap();
+
+    let stats = json_body(request(&state, "GET", "/api/stats").await).await;
+    assert_eq!(stats["summary"]["cyber_count"], 1_105);
+    assert_eq!(stats["summary"]["total_requests"], 1_105);
+    assert_eq!(stats["daily"][0]["cyber_count"], 1_105);
+
+    state
+        .store
+        .log(
+            &RequestLog {
+                id: "next-cyber".into(),
+                timestamp,
+                status: 200,
+                cyber: true,
+                ..Default::default()
+            },
+            7,
+        )
+        .unwrap();
+    let next = json_body(request(&state, "GET", "/api/stats").await).await;
+    assert_eq!(next["summary"]["cyber_count"], 1_106);
+    assert_eq!(next["daily"][0]["cyber_count"], 1_106);
+}

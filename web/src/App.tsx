@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   Activity,
@@ -32,6 +32,15 @@ import { PromoBanner } from "./PromoBanner";
 import { useUpdateCheck } from "./useUpdateCheck";
 import { version } from "../package.json";
 
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (element: HTMLElement, options: { sitekey: string; callback: (token: string) => void; "expired-callback": () => void; "error-callback": () => void }) => string;
+      reset: (widgetId?: string) => void;
+    };
+  }
+}
+
 const navigation = [
   { id: "dashboard", label: "仪表盘", icon: LayoutDashboard },
   { id: "groups", label: "分组管理", icon: FolderClosed },
@@ -57,9 +66,11 @@ function Brand({ dark = false }: { dark?: boolean }) {
 
 function Authentication({
   initialized,
+  turnstileSiteKey,
   onSuccess,
 }: {
   initialized: boolean;
+  turnstileSiteKey: string;
   onSuccess: () => Promise<void>;
 }) {
   const [username, setUsername] = useState("");
@@ -68,6 +79,31 @@ function Authentication({
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const turnstileRef = useRef<HTMLDivElement>(null);
+  const turnstileWidget = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialized || !turnstileSiteKey || !turnstileRef.current) return;
+    const render = () => {
+      if (!window.turnstile || !turnstileRef.current || turnstileWidget.current) return;
+      turnstileWidget.current = window.turnstile.render(turnstileRef.current, {
+        sitekey: turnstileSiteKey,
+        callback: setTurnstileToken,
+        "expired-callback": () => setTurnstileToken(""),
+        "error-callback": () => setTurnstileToken(""),
+      });
+    };
+    if (window.turnstile) render();
+    else {
+      const script = document.createElement("script");
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.defer = true;
+      script.addEventListener("load", render);
+      document.head.appendChild(script);
+      return () => script.removeEventListener("load", render);
+    }
+  }, [initialized, turnstileSiteKey]);
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
@@ -75,14 +111,25 @@ function Authentication({
       setError("两次输入的密码不一致");
       return;
     }
+    if (initialized && turnstileSiteKey && !turnstileToken) {
+      setError("请完成 Cloudflare Turnstile 安全校验");
+      return;
+    }
     setBusy(true);
     try {
       await api(initialized ? "/login" : "/setup", "POST", {
         username,
         password,
+        ...(initialized && turnstileSiteKey
+          ? { turnstile_token: turnstileToken }
+          : {}),
       });
       await onSuccess();
     } catch (failure) {
+      if (initialized && turnstileToken && window.turnstile) {
+        window.turnstile.reset(turnstileWidget.current || undefined);
+        setTurnstileToken("");
+      }
       setError(errorMessage(failure));
     } finally {
       setBusy(false);
@@ -160,6 +207,9 @@ function Authentication({
               />
             </Field>
           )}
+          {initialized && turnstileSiteKey && (
+            <div ref={turnstileRef} className="turnstile-widget" />
+          )}
           <ErrorBox message={error} />
           <Button className="primary auth-submit" busy={busy} type="submit">
             {initialized ? "登录工作空间" : "创建并进入工作空间"}
@@ -181,6 +231,7 @@ function Authentication({
 
 export default function App() {
   const [initialized, setInitialized] = useState<boolean | null>(null);
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState("");
   const [state, setState] = useState<State | null>(null);
   const [page, setPage] = useState<Page>(() => {
     const stored = localStorage.getItem("zako-page");
@@ -210,7 +261,7 @@ export default function App() {
         api<RelayKey[]>("/keys"),
         api<Settings>("/settings"),
         api<Profile[]>("/profiles"),
-        api<{ username: string }>("/bootstrap"),
+        api<{ username: string; turnstile_site_key: string }>("/bootstrap"),
       ]);
     setState({
       groups,
@@ -220,6 +271,7 @@ export default function App() {
       profiles,
       username: bootstrap.username,
     });
+    setTurnstileSiteKey(bootstrap.turnstile_site_key || "");
     setInitialized(true);
   }, []);
   const boot = useCallback(async () => {
@@ -229,8 +281,10 @@ export default function App() {
       const bootstrap = await api<{
         initialized: boolean;
         authenticated: boolean;
+        turnstile_site_key: string;
       }>("/bootstrap");
       setInitialized(bootstrap.initialized);
+      setTurnstileSiteKey(bootstrap.turnstile_site_key || "");
       if (bootstrap.authenticated) await loadState();
     } catch (failure) {
       setError(errorMessage(failure));
@@ -317,7 +371,7 @@ export default function App() {
   if (!state)
     return (
       <>
-        <Authentication initialized={!!initialized} onSuccess={loadState} />
+        <Authentication initialized={!!initialized} turnstileSiteKey={turnstileSiteKey} onSuccess={loadState} />
         {notice && <Toast {...notice} onClose={() => setNotice(null)} />}
       </>
     );

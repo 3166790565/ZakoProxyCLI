@@ -228,13 +228,15 @@ pub async fn bootstrap(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value
     let c = s.store.config()?;
     let authenticated = s.store.authenticated(cookie(&h));
     Ok(Json(
-        json!({"initialized":!c.password_hash.is_empty(),"authenticated":authenticated,"username":if authenticated {c.username} else {String::new()}}),
+        json!({"initialized":!c.password_hash.is_empty(),"authenticated":authenticated,"username":if authenticated {c.username} else {String::new()},"turnstile_site_key": if c.settings.turnstile_secret_key.is_empty() { String::new() } else { c.settings.turnstile_site_key }}),
     ))
 }
 #[derive(Deserialize)]
 pub struct Credentials {
     username: String,
     password: String,
+    #[serde(default)]
+    turnstile_token: String,
 }
 pub async fn setup(
     State(s): State<Shared>,
@@ -294,8 +296,111 @@ pub async fn login(
             "Invalid credentials".into(),
         ));
     }
+    if !c.settings.turnstile_secret_key.is_empty() {
+        verify_turnstile(
+            &s,
+            &h,
+            &c.settings.turnstile_secret_key,
+            &input.turnstile_token,
+        )
+        .await?;
+    }
     s.login_attempts.lock().unwrap().remove("admin");
     session_response(&s, &h, &c.username, &c.password_hash)
+}
+
+#[derive(Deserialize)]
+struct TurnstileResponse {
+    success: bool,
+    #[serde(default)]
+    hostname: String,
+}
+
+fn turnstile_hostname_matches(headers: &HeaderMap, challenge_hostname: &str) -> bool {
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    if host.is_empty()
+        || host.chars().any(|c| {
+            c.is_ascii_control() || c.is_whitespace() || matches!(c, '/' | '\\' | '?' | '#' | '@')
+        })
+    {
+        return false;
+    }
+    let Ok(host_url) = reqwest::Url::parse(&format!("http://{host}/")) else {
+        return false;
+    };
+    if !host_url.username().is_empty() || host_url.password().is_some() {
+        return false;
+    }
+    let Some(request_hostname) = host_url.host_str() else {
+        return false;
+    };
+    request_hostname
+        .trim_end_matches('.')
+        .eq_ignore_ascii_case(challenge_hostname.trim().trim_end_matches('.'))
+}
+
+async fn verify_turnstile(
+    state: &Shared,
+    headers: &HeaderMap,
+    encrypted_secret: &str,
+    token: &str,
+) -> Result<(), ApiError> {
+    if token.trim().is_empty() {
+        return Err(ApiError(
+            StatusCode::UNAUTHORIZED,
+            "请完成 Cloudflare Turnstile 安全校验".into(),
+        ));
+    }
+    let secret = state.store.unseal(encrypted_secret).map_err(|_| {
+        ApiError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Cloudflare Turnstile 配置不可用".into(),
+        )
+    })?;
+    let remoteip = headers
+        .get("x-forwarded-for")
+        .or_else(|| headers.get("x-real-ip"))
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let mut form = vec![("secret", secret.as_str()), ("response", token)];
+    if let Some(ip) = remoteip {
+        form.push(("remoteip", ip));
+    }
+    let verify_url = std::env::var("TURNSTILE_VERIFY_URL")
+        .unwrap_or_else(|_| "https://challenges.cloudflare.com/turnstile/v0/siteverify".into());
+    let response = state
+        .client
+        .post(verify_url)
+        .timeout(std::time::Duration::from_secs(10))
+        .form(&form)
+        .send()
+        .await
+        .map_err(|_| {
+            ApiError(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Cloudflare Turnstile 校验服务不可用".into(),
+            )
+        })?;
+    let result = response.json::<TurnstileResponse>().await.map_err(|_| {
+        ApiError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Cloudflare Turnstile 校验服务不可用".into(),
+        )
+    })?;
+    if !result.success || !turnstile_hostname_matches(headers, &result.hostname) {
+        return Err(ApiError(
+            StatusCode::UNAUTHORIZED,
+            "Cloudflare Turnstile 安全校验失败".into(),
+        ));
+    }
+    Ok(())
 }
 pub async fn logout(State(s): State<Shared>, h: HeaderMap) -> Result<Response, ApiError> {
     auth(&s, &h)?;
@@ -643,14 +748,83 @@ pub async fn reveal_key(
 }
 pub async fn settings(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
     auth(&s, &h)?;
-    Ok(Json(json!(s.store.config()?.settings)))
+    let settings = s.store.config()?.settings;
+    Ok(Json(settings_public(&settings)))
+}
+
+fn settings_public(settings: &Settings) -> Value {
+    json!({
+        "security_path": settings.security_path,
+        "turnstile_site_key": settings.turnstile_site_key,
+        "turnstile_enabled": !settings.turnstile_secret_key.is_empty(),
+        "max_retries": settings.max_retries,
+        "failure_threshold": settings.failure_threshold,
+        "cooldown_seconds": settings.cooldown_seconds,
+        "request_timeout_seconds": settings.request_timeout_seconds,
+        "retention_days": settings.retention_days,
+    })
+}
+
+#[derive(Deserialize)]
+pub struct SettingsInput {
+    pub security_path: String,
+    #[serde(default)]
+    pub turnstile_site_key: Option<String>,
+    #[serde(default)]
+    pub turnstile_secret_key: Option<String>,
+    pub max_retries: u32,
+    pub failure_threshold: u32,
+    pub cooldown_seconds: u32,
+    pub request_timeout_seconds: u32,
+    pub retention_days: u32,
 }
 pub async fn save_settings(
     State(s): State<Shared>,
     h: HeaderMap,
-    Json(mut settings): Json<Settings>,
+    Json(input): Json<SettingsInput>,
 ) -> ApiResult<Value> {
     auth(&s, &h)?;
+    let existing = s.store.config()?.settings;
+    let submitted_secret = input.turnstile_secret_key;
+    let mut settings = Settings {
+        security_path: input.security_path,
+        turnstile_site_key: input
+            .turnstile_site_key
+            .unwrap_or(existing.turnstile_site_key),
+        turnstile_secret_key: existing.turnstile_secret_key,
+        max_retries: input.max_retries,
+        failure_threshold: input.failure_threshold,
+        cooldown_seconds: input.cooldown_seconds,
+        request_timeout_seconds: input.request_timeout_seconds,
+        retention_days: input.retention_days,
+    };
+    settings.turnstile_site_key = settings.turnstile_site_key.trim().to_owned();
+    if let Some(secret) = submitted_secret {
+        let secret = secret.trim();
+        if secret.len() > 512 || secret.chars().any(|c| c.is_control() || c.is_whitespace()) {
+            return Err(bad("Cloudflare Turnstile 密钥格式无效"));
+        }
+        settings.turnstile_secret_key = if secret.is_empty() {
+            settings.turnstile_site_key.clear();
+            String::new()
+        } else {
+            s.store.seal(secret)?
+        };
+    }
+    if settings.turnstile_site_key.len() > 256
+        || settings
+            .turnstile_site_key
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace())
+    {
+        return Err(bad("Cloudflare Turnstile 站点密钥格式无效"));
+    }
+    if settings.turnstile_site_key.is_empty() && !settings.turnstile_secret_key.is_empty() {
+        return Err(bad("请输入 Cloudflare Turnstile 站点密钥"));
+    }
+    if !settings.turnstile_site_key.is_empty() && settings.turnstile_secret_key.is_empty() {
+        return Err(bad("请输入 Cloudflare Turnstile 密钥"));
+    }
     settings.security_path = settings.security_path.trim_matches('/').into();
     if !settings
         .security_path
@@ -681,7 +855,7 @@ pub async fn save_settings(
         c.settings = settings.clone();
         Ok(())
     })?;
-    Ok(Json(json!(settings)))
+    Ok(Json(settings_public(&settings)))
 }
 #[derive(Deserialize)]
 pub struct PasswordInput {
@@ -992,6 +1166,23 @@ pub async fn stats(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn turnstile_challenge_must_match_request_hostname() {
+        let headers =
+            HeaderMap::from_iter([(header::HOST, "console.example.test:1990".parse().unwrap())]);
+        assert!(turnstile_hostname_matches(&headers, "console.example.test"));
+        assert!(turnstile_hostname_matches(
+            &headers,
+            "CONSOLE.EXAMPLE.TEST."
+        ));
+        assert!(!turnstile_hostname_matches(&headers, "other.example.test"));
+        assert!(!turnstile_hostname_matches(
+            &HeaderMap::new(),
+            "console.example.test"
+        ));
+    }
+
     #[test]
     fn password_verification() {
         let hash = password_hash("a-long-secret-password").unwrap();

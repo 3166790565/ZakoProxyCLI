@@ -2,8 +2,8 @@
 
 All administration endpoints use `/api/`. Session cookie is `zako_session`, HttpOnly, SameSite=Strict. All requests include `X-Console-Path` equal to `location.pathname` (the security entry). Errors are `{ "error": "message" }`. JSON POST/PUT bodies use snake_case.
 
-- GET `/api/bootstrap`: `{initialized:boolean, authenticated:boolean, username:string}`
-- POST `/api/setup`, POST `/api/login`: `{username,password}` -> session cookie
+- GET `/api/bootstrap`: `{initialized:boolean, authenticated:boolean, username:string, turnstile_site_key:string}`. The site key is returned only when Turnstile is enabled.
+- POST `/api/setup`, POST `/api/login`: `{username,password,turnstile_token?}` -> session cookie. When Turnstile is enabled, login requires a token verified by Cloudflare.
 - POST `/api/logout`
 - GET `/api/groups`: array `{id,name,profile_ids:string[],default_strategy_enabled:boolean}`. New and legacy groups default the switch to false.
 - POST `/api/groups`, PUT `/api/groups/:id`: `{name,profile_ids:string[],default_strategy_enabled?:boolean}`. Groups configure bundled selections and this optional default strategy, not arbitrary model lists or instructions. POST omission defaults false; PUT omission preserves its saved value; explicit false disables it. `null`, strings, numbers, arrays, and objects are rejected. Unknown profile IDs are rejected and duplicates deduplicated. `profile_ids:[]` removes all specific selections; it disables all injection only when `default_strategy_enabled` is false. Legacy unmodified presets without `profile_ids` migrate automatically; other legacy custom configuration does not become active.
@@ -19,8 +19,8 @@ All administration endpoints use `/api/`. Session cookie is `zako_session`, Http
 - PUT `/api/keys/:id`: `{name,group_id,enabled}`
 - DELETE `/api/keys/:id`
 - POST `/api/keys/:id/reveal`: `{key:string}`
-- GET `/api/settings`: `{security_path,max_retries,failure_threshold,cooldown_seconds,request_timeout_seconds,retention_days}`
-- PUT `/api/settings`: same object. Security path `""` or e.g. `"console-secret"`. After success frontend navigates to new path.
+- GET `/api/settings`: `{security_path,turnstile_site_key,turnstile_enabled,max_retries,failure_threshold,cooldown_seconds,request_timeout_seconds,retention_days}`. The Turnstile secret is never returned.
+- PUT `/api/settings`: same object plus optional `turnstile_secret_key`; send an empty value to clear it. Both Turnstile site and secret keys are required to enable it. Security path `""` or e.g. `"console-secret"`. After success frontend navigates to new path.
 - POST `/api/password`: `{current_password,new_password,confirm_password}` -> all sessions revoked, return to login
 - GET `/api/updates`: updater configuration, current version, last checked release and persisted job. A configured but unreachable controller returns an `error` field so reconnect polling can continue.
 - GET `/api/updates/latest`: check the fixed official repository's latest non-draft, non-prerelease `vX.Y.Z` release.

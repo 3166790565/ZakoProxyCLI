@@ -128,6 +128,8 @@ export type RelayKey = {
 };
 export type Settings = {
   security_path: string;
+  turnstile_site_key: string;
+  turnstile_enabled: boolean;
   max_retries: number;
   failure_threshold: number;
   cooldown_seconds: number;
@@ -239,6 +241,12 @@ export const compact = (value = 0) =>
     notation: "compact",
     maximumFractionDigits: 2,
   }).format(value);
+export const compactCount = (value = 0) => {
+  const magnitude = Math.abs(value);
+  if (magnitude >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}m`;
+  if (magnitude >= 1_000) return `${(value / 1_000).toFixed(2)}k`;
+  return number(value);
+};
 export const tokenCount = (value = 0) => {
   const magnitude = Math.abs(value);
   const unit = ([

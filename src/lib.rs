@@ -172,7 +172,7 @@ async fn console(State(state): State<Shared>, headers: HeaderMap, uri: Uri) -> R
                 .parse()
                 .unwrap(),
             );
-            h.insert("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'".parse().unwrap());
+            h.insert("content-security-policy","default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'none'".parse().unwrap());
             if secure {
                 h.insert(
                     "strict-transport-security",
