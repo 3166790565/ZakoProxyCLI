@@ -55,6 +55,13 @@ pub fn all() -> &'static [Profile] {
             }
             profiles.push(profile);
         }
+        let hanshuang: Vec<Profile> =
+            serde_json::from_str(include_str!("../profiles/hanshuang/index.json"))
+                .expect("Embedded Hanshuang catalog must be valid JSON");
+        for mut profile in hanshuang {
+            profile.instruction = include_str!("../profiles/hanshuang/system.md").into();
+            profiles.push(profile);
+        }
         let kimi: Vec<Profile> =
             serde_json::from_str(include_str!("../profiles/kimi-break/index.json"))
                 .expect("Embedded kimi-break catalog must be valid JSON");
@@ -163,7 +170,7 @@ mod tests {
         let entries: Vec<serde_json::Value> =
             serde_json::from_str(include_str!("../profiles/coldcoffee/index.json")).unwrap();
         assert_eq!(entries.len(), 28);
-        assert_eq!(all().len(), 35);
+        assert_eq!(all().len(), 36);
         let mut models = std::collections::HashSet::new();
         for entry in entries {
             let profile = find(entry["id"].as_str().unwrap()).unwrap();
@@ -238,7 +245,7 @@ mod tests {
             .iter()
             .filter(|profile| profile.model_family == "deepseek")
             .collect();
-        assert_eq!(deepseek.len(), 5);
+        assert_eq!(deepseek.len(), 6);
         for profile in deepseek {
             assert_eq!(
                 profile
@@ -263,6 +270,14 @@ mod tests {
         assert_eq!(
             find("coldcoffee-deepseek-v4.1-flash-v1").unwrap().models,
             ["deepseek-v4.1-flash", "deepseek-4.1-flash"]
+        );
+        let short_name = find("hanshuang-deepseek-flash-v1").unwrap();
+        assert_eq!(short_name.models, ["deepseek-flash"]);
+        assert_eq!(
+            short_name.instruction,
+            find("coldcoffee-deepseek-v4.1-flash-v1")
+                .unwrap()
+                .instruction
         );
     }
 

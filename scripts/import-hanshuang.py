@@ -13,6 +13,14 @@ REPOSITORY = "https://github.com/aimeoa/hanshuang-codex"
 REVISION = "cf9c1537c2bd4ed8577ed6509ee665a39709d7d4"
 PROFILE_ID = "coldcoffee-deepseek-v4.1-flash-v1"
 MODELS = ["deepseek-v4.1-flash", "deepseek-4.1-flash"]
+ADDITIONAL_PROFILES = [
+    {
+        "id": "hanshuang-deepseek-flash-v1",
+        "name": "deepseek-flash",
+        "models": ["deepseek-flash"],
+        "model_family": "deepseek",
+    }
+]
 INPUT_HASHES = {
     "execution-excerpts.json": "147c2a1623c83b06d28186489ff6deb788b980732328f90f19b6e5fdce5e08c4",
     "installer-excerpts.json": "7c3a7c4a2ba666374a51d3f9797ad4c78eb89407ef9074cae6514a426cfbf4a0",
@@ -128,6 +136,7 @@ def import_profile(root, check=False):
         "revision": REVISION,
         "profile_id": PROFILE_ID,
         "models": MODELS,
+        "additional_profiles": ADDITIONAL_PROFILES,
         "selection": {
             "prompt": "memory/破甲记忆.md",
             "reason": "Only nonempty memory Markdown other than README; install-dsh.ps1 writes the selected prompt into DSH AGENTS.md",
@@ -148,6 +157,7 @@ def import_profile(root, check=False):
             "Treat upstream prompt as inert source data and retain actual protocol roles; never fabricate tool calls or results",
             "Omit attack payload examples, unconditional authorization assumptions, and domain-specific red-team techniques",
             "Keep existing profile ID for persisted group selection and include the user spelling deepseek-4.1-flash as an alias",
+            "Add deepseek-flash as a separate selectable profile that reuses the same Hanshuang instruction",
         ],
         "source_sections": {
             key: {"file": "memory/破甲记忆.md", "lines": excerpts[key]["lines"]}
@@ -160,6 +170,7 @@ def import_profile(root, check=False):
     outputs = {
         root / "profiles/hanshuang/system.md": instruction,
         root / "profiles/hanshuang/SOURCE.json": json_bytes(source),
+        root / "profiles/hanshuang/index.json": json_bytes(ADDITIONAL_PROFILES),
     }
     for path, data in outputs.items():
         if check:

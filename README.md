@@ -110,7 +110,7 @@ docker compose ps
 
 ## 配置中转
 
-1. **分组管理：** 创建分组，在“破甲策略”中通过 `profile_ids` 独立勾选专用策略。目录共有 35 个策略、36 个精确模型 ID（DeepSeek 4.1 Flash 的两种拼写共用一个策略），完整名单见下表。另有“开启破甲默认策略”开关 `default_strategy_enabled`，新建及旧版分组默认关闭。按账号映射后的实际模型匹配已选专用策略，命中时优先使用；未命中时，仅开关开启才使用默认策略。每次请求最多使用一种策略，不拼接专用与默认正文。分组不配置自定义模型列表或指令；账号可用模型、协议和分组资格仍独立检查，开关不会增加可调用模型。旧版未修改过的内置模板分组会自动识别。删除分组前需先解除账号和密钥引用。
+1. **分组管理：** 创建分组，在“破甲策略”中通过 `profile_ids` 独立勾选专用策略。目录共有 36 个策略、37 个精确模型 ID（DeepSeek 4.1 Flash 的两个历史拼写共用原策略，`deepseek-flash` 作为独立 Hanshuang 策略），完整名单见下表。另有“开启破甲默认策略”开关 `default_strategy_enabled`，新建及旧版分组默认关闭。按账号映射后的实际模型匹配已选专用策略，命中时优先使用；未命中时，仅开关开启才使用默认策略。每次请求最多使用一种策略，不拼接专用与默认正文。分组不配置自定义模型列表或指令；账号可用模型、协议和分组资格仍独立检查，开关不会增加可调用模型。旧版未修改过的内置模板分组会自动识别。删除分组前需先解除账号和密钥引用。
 2. **账号管理：** 输入上游端点及 API key，“支持协议”默认勾选 `responses` / `compact` / `chat` / `anthropic`，可按上游中转站支持情况取消，再拉取并勾选上游实际可用模型、选择所属分组。`chat` 对应 `/v1/chat/completions`，`anthropic` 对应 `/v1/messages`；选择 Anthropic 获取模型时也使用 Anthropic 鉴权。模型名称不限定协议：例如 Grok、Gemini、DeepSeek 或 GLM 可以走中转站提供的 OpenAI 兼容或 Anthropic 兼容接口。可通过 `model_mappings` 设置“请求模型 → 实际模型”，映射目标必须已勾选；映射仅执行一次，不递归串联，未配置映射的请求使用同名模型。端点可带或不带 `/v1`。RPM 和并发限制设为 `0` 表示不限制；编辑时密钥留空会保留原密钥。“模型映射”和“所属分组”之间可选填账号代理，支持 `socks5://host:port`、`socks5h://host:port` 和带用户名密码的链接（特殊字符需百分号编码）。右侧测试按钮通过该代理请求当前上游模型接口，显示耗时、HTTP 状态或脱敏错误；HTTP 401/403 表示代理已连通但上游鉴权失败。代理地址加密保存，编辑留空保留，点击“移除代理”并保存才会删除。保存后四协议、流式请求及模型获取均走该账号代理，代理失败不会自动改为该账号直连；重试使用下一个账号自己的代理。Docker 中 `127.0.0.1` 指容器自身，应填写容器可访问的代理地址。
 3. **密钥管理：** 为指定分组创建命名的客户端 API key，可在创建后及之后登录控制台时复制。修改所属分组无需更换 key；停用或删除后阻止新的请求。API 基础地址为当前站点来源加 `/v1`。
 4. **系统设置：** 设置安全入口、最大重试数、失败阈值、冷却时间、请求超时及统计保留天数。修改密码需验证原密码并再次确认新密码，成功后撤销所有会话。此处二次确认不是 TOTP 等独立第二认证因素。
@@ -129,11 +129,11 @@ docker compose ps
 | Claude | `claude-fable-5`、`claude-fable-5-1`、`claude-haiku-4-5`、`claude-haiku-5-5`、`claude-opus-4-5`、`claude-opus-4-6`、`claude-opus-4-7`、`claude-opus-4-8`、`claude-opus-5`、`claude-opus-5-5`、`claude-sonnet-4-5`、`claude-sonnet-4-6`、`claude-sonnet-5`、`claude-sonnet-5-5` |
 | Grok | `grok-4.7` |
 | Gemini | `gemini-3-flash`、`gemini-3.1-flash-image`、`gemini-3.1-pro`、`gemini-3.1-pro-preview`、`gemini-3.6-flash`、`gemini-3.7-flash`、`gemini-3.8-flash` |
-| DeepSeek | `deepseek-v4-flash`、`deepseek-v4-flash-0731`、`deepseek-v4-pro`、`deepseek-v4-pro-0813`、`deepseek-v4.1-flash` / `deepseek-4.1-flash`（后二者共用寒霜策略） |
+| DeepSeek | `deepseek-v4-flash`、`deepseek-v4-flash-0731`、`deepseek-v4-pro`、`deepseek-v4-pro-0813`、`deepseek-v4.1-flash` / `deepseek-4.1-flash` / `deepseek-flash`（前两者共用原寒霜策略，后者为独立寒霜策略） |
 | GLM | `glm-5.3` |
 | Kimi | `kimi-k3`、`kimi-k2.7`、`kimi-k2.7-code`、`kimi-k2.6` |
 
-专用策略按精确模型选择，不按系列通配匹配。寒霜策略沿用 `coldcoffee-deepseek-v4.1-flash-v1`，已有分组选择自动获得新正文，同时匹配 `deepseek-v4.1-flash` 与 `deepseek-4.1-flash`。名单表示策略选择，并不承诺上游提供这些模型；以账号实际可用模型和协议为准。冷咖啡、寒霜和 Kimi 正文均为内联请求文本，代理不会安装本地 Skill、工具或客户端配置，也不会伪造工具执行结果。实际模型行为须在使用的中转站验证。
+专用策略按精确模型选择，不按系列通配匹配。寒霜策略沿用 `coldcoffee-deepseek-v4.1-flash-v1`，已有分组选择继续匹配 `deepseek-v4.1-flash` 与 `deepseek-4.1-flash`；新增独立 `hanshuang-deepseek-flash-v1` 策略匹配 `deepseek-flash`，正文相同。名单表示策略选择，并不承诺上游提供这些模型；以账号实际可用模型和协议为准。冷咖啡、寒霜和 Kimi 正文均为内联请求文本，代理不会安装本地 Skill、工具或客户端配置，也不会伪造工具执行结果。实际模型行为须在使用的中转站验证。
 
 调度仅选择匹配当前分组、协议且映射后实际模型已勾选的可用账号，未勾选任何可用模型的账号不接收请求。**优先级数字越小越先尝试**，相同优先级按账号 ID 稳定排序。单请求最多尝试 `最大重试数 + 1` 个不同账号。每次尝试都从原始客户端请求重新应用当前账号的单跳映射，再按实际模型匹配分组策略；故障转移到其他账号时独立计算，不继承或叠加前一账号的策略。连接失败、HTTP 401、403、408、429 和 HTTP 5xx 可在响应开始前切换到下一账号；连续可重试失败达到阈值时进入冷却，冷却时间结束后重新参与调度。其余 4xx 原样返回，不触发重试。流式响应已开始后中断不会重放请求。RPM 窗口、并发及冷却状态只保存在当前进程，重启后重置；同一个数据卷只运行一个实例。
 
