@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · English · [Security](SECURITY.md) · [API contract](API_CONTRACT.md)
 
-A self-hosted Rust Responses / Chat Completions / Anthropic Messages API relay with a responsive desktop/mobile administration console, SQLite persistence, and Docker Compose deployment. The console includes a dashboard, groups, upstream accounts, client API keys, and system settings.
+A self-hosted Rust Responses / Chat Completions / Anthropic Messages API relay with a responsive desktop/mobile administration console, SQLite persistence, and Docker Compose deployment. The console includes a dashboard, groups, upstream accounts, client API keys, request logs, and system settings.
 
 ## Relay Recommendation: 杂鱼 API
 
@@ -81,6 +81,10 @@ Images retain ghcr.io/mizaawa/zakoai-proxy-cli for existing deployments. v0.6.0 
 4. **System settings:** set the console entry path, retry budget, failure threshold, cooldown, request timeout, and statistics retention. Changing a password requires the current password and matching new-password confirmation; it revokes all sessions. Confirmation is not TOTP or another independent authentication factor.
 
 For example, the account configuration fragment `{"models":["gpt-6-astra"],"model_mappings":{"chat-main":"gpt-6-astra"}}` accepts a client request for `chat-main` and sends `model: "gpt-6-astra"` upstream. Selecting the group's `gpt-6-astra` strategy applies that actual model's profile, not a profile for the alias. An unmapped request for `gpt-6-astra` still uses that same actual model. These mapping and profile matching rules apply to every supported protocol.
+
+### v0.7.0 Request Logs and Request-Path Fixes
+
+A dedicated Request Logs page now lives under API keys. It retains the latest 7 days by default, shows 20 entries per page, and supports page selection, JSON export, clearing all logs, status codes, structured JSON/SSE error details, first-token latency, and cache read/write token counts. The dashboard no longer duplicates the log view. Responses and Chat streaming tool calls release concurrency as soon as a terminal event is confirmed; normal length-limit and content-filter incomplete results do not count as account failures. Account cooldowns return 503 with the actual remaining delay, while local RPM and concurrency limits remain 429 with machine-readable reasons. Actual upstream HTTP status, sanitized error body, and Retry-After continue to pass through.
 
 ### Bundled Profile Models
 
