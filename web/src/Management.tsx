@@ -149,6 +149,14 @@ function groupModels(group: Group, profiles: Profile[]) {
   ];
 }
 
+function profileDisplayModels(profile: Profile) {
+  // Keep both spellings in the API for exact model matching, but retain the
+  // historical single label in the group editor.
+  return profile.id === "coldcoffee-deepseek-v4.1-flash-v1"
+    ? ["deepseek-4.1-flash"]
+    : profile.models;
+}
+
 export function GroupsPage({ state, reload, notify }: PageProps) {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Group | "new" | null>(null);
@@ -360,7 +368,10 @@ function GroupForm({
     return [...state.profiles]
       .sort(
         (a, b) =>
-          modelNameOrder.compare(a.models.join(" · "), b.models.join(" · ")) ||
+          modelNameOrder.compare(
+            profileDisplayModels(a).join(" · "),
+            profileDisplayModels(b).join(" · "),
+          ) ||
           modelNameOrder.compare(a.id, b.id),
       )
       .filter((item) =>
@@ -458,7 +469,7 @@ function GroupForm({
                   <Check size={13} strokeWidth={2.5} />
                 </span>
                 <span className="profile-description">
-                  <strong>{item.models.join(" · ")}</strong>
+                  <strong>{profileDisplayModels(item).join(" · ")}</strong>
                 </span>
               </label>
             ))}
