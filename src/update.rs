@@ -239,7 +239,14 @@ pub async fn latest(State(s): State<Shared>, h: HeaderMap) -> ApiResult<UpdateSt
     let latest = cached_release(&RELEASE_CACHE, &s.client, RELEASE_API)
         .await
         .map_err(|error| ApiError(StatusCode::BAD_GATEWAY, error))?;
-    let mut value = status(State(s), h).await?.0;
+    let mut value = if helper_url()?.is_some() {
+        match helper(&s, "latest", None).await {
+            Ok(value) => response(value, true, None),
+            Err(_error) => status(State(s.clone()), h.clone()).await?.0,
+        }
+    } else {
+        status(State(s.clone()), h.clone()).await?.0
+    };
     let mut state = AgentStatus {
         latest: value.latest.take(),
         job: value.job.take(),
