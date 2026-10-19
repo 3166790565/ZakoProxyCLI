@@ -228,7 +228,7 @@ pub async fn bootstrap(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value
     let c = s.store.config()?;
     let authenticated = s.store.authenticated(cookie(&h));
     Ok(Json(
-        json!({"initialized":!c.password_hash.is_empty(),"authenticated":authenticated,"username":if authenticated {c.username} else {String::new()},"turnstile_site_key": if c.settings.turnstile_secret_key.is_empty() { String::new() } else { c.settings.turnstile_site_key }}),
+        json!({"initialized":!c.password_hash.is_empty(),"authenticated":authenticated,"username":if authenticated {c.username} else {String::new()},"turnstile_site_key": if s.turnstile_secret_key().is_empty() { String::new() } else { s.turnstile_site_key() }}),
     ))
 }
 #[derive(Deserialize)]
@@ -296,14 +296,9 @@ pub async fn login(
             "Invalid credentials".into(),
         ));
     }
-    if !c.settings.turnstile_secret_key.is_empty() {
-        verify_turnstile(
-            &s,
-            &h,
-            &c.settings.turnstile_secret_key,
-            &input.turnstile_token,
-        )
-        .await?;
+    let turnstile_secret = s.turnstile_secret_key();
+    if !turnstile_secret.is_empty() {
+        verify_turnstile(&s, &h, &turnstile_secret, &input.turnstile_token).await?;
     }
     s.login_attempts.lock().unwrap().remove("admin");
     session_response(&s, &h, &c.username, &c.password_hash)
@@ -314,6 +309,9 @@ struct TurnstileResponse {
     success: bool,
     #[serde(default)]
     hostname: String,
+    #[serde(default)]
+    #[serde(rename = "error-codes")]
+    error_codes: Vec<String>,
 }
 
 fn turnstile_hostname_matches(headers: &HeaderMap, challenge_hostname: &str) -> bool {
@@ -347,7 +345,7 @@ fn turnstile_hostname_matches(headers: &HeaderMap, challenge_hostname: &str) -> 
 async fn verify_turnstile(
     state: &Shared,
     headers: &HeaderMap,
-    encrypted_secret: &str,
+    secret: &str,
     token: &str,
 ) -> Result<(), ApiError> {
     if token.trim().is_empty() {
@@ -356,12 +354,6 @@ async fn verify_turnstile(
             "请完成 Cloudflare Turnstile 安全校验".into(),
         ));
     }
-    let secret = state.store.unseal(encrypted_secret).map_err(|_| {
-        ApiError(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Cloudflare Turnstile 配置不可用".into(),
-        )
-    })?;
     let remoteip = headers
         .get("x-forwarded-for")
         .or_else(|| headers.get("x-real-ip"))
@@ -369,7 +361,7 @@ async fn verify_turnstile(
         .and_then(|value| value.split(',').next())
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let mut form = vec![("secret", secret.as_str()), ("response", token)];
+    let mut form = vec![("secret", secret), ("response", token)];
     if let Some(ip) = remoteip {
         form.push(("remoteip", ip));
     }
@@ -401,6 +393,81 @@ async fn verify_turnstile(
         ));
     }
     Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct TurnstileTestInput {
+    #[serde(default)]
+    pub turnstile_site_key: Option<String>,
+    #[serde(default)]
+    pub turnstile_secret_key: Option<String>,
+}
+
+pub async fn test_turnstile(
+    State(s): State<Shared>,
+    h: HeaderMap,
+    Json(input): Json<TurnstileTestInput>,
+) -> ApiResult<Value> {
+    auth(&s, &h)?;
+    let site_key = input
+        .turnstile_site_key
+        .unwrap_or_else(|| s.turnstile_site_key());
+    let secret = input
+        .turnstile_secret_key
+        .unwrap_or_else(|| s.turnstile_secret_key());
+    if site_key.trim().is_empty() || secret.trim().is_empty() {
+        return Err(bad("请先填写 Cloudflare Turnstile 站点密钥和密钥"));
+    }
+    if site_key
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace())
+        || secret.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
+        return Err(bad("Cloudflare Turnstile 密钥格式无效"));
+    }
+    let verify_url = std::env::var("TURNSTILE_VERIFY_URL")
+        .unwrap_or_else(|_| "https://challenges.cloudflare.com/turnstile/v0/siteverify".into());
+    let response = s
+        .client
+        .post(verify_url)
+        .timeout(std::time::Duration::from_secs(10))
+        .form(&[
+            ("secret", secret.as_str()),
+            ("response", "zako-connectivity-test"),
+        ])
+        .send()
+        .await
+        .map_err(|_| {
+            ApiError(
+                StatusCode::BAD_GATEWAY,
+                "Cloudflare Turnstile 连接失败".into(),
+            )
+        })?;
+    let status = response.status();
+    let result = response.json::<TurnstileResponse>().await.map_err(|_| {
+        ApiError(
+            StatusCode::BAD_GATEWAY,
+            "Cloudflare Turnstile 返回无效响应".into(),
+        )
+    })?;
+    if !status.is_success() {
+        return Err(ApiError(
+            StatusCode::BAD_GATEWAY,
+            "Cloudflare Turnstile 连接失败".into(),
+        ));
+    }
+    if result
+        .error_codes
+        .iter()
+        .any(|code| code == "invalid-input-secret")
+    {
+        return Err(bad("Cloudflare Turnstile 密钥无效"));
+    }
+    Ok(Json(json!({
+        "ok": true,
+        "connected": true,
+        "message": "Cloudflare Turnstile 连接正常，密钥可用",
+    })))
 }
 pub async fn logout(State(s): State<Shared>, h: HeaderMap) -> Result<Response, ApiError> {
     auth(&s, &h)?;
@@ -749,14 +816,18 @@ pub async fn reveal_key(
 pub async fn settings(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
     auth(&s, &h)?;
     let settings = s.store.config()?.settings;
-    Ok(Json(settings_public(&settings)))
+    Ok(Json(settings_public(
+        &settings,
+        &s.turnstile_site_key(),
+        !s.turnstile_secret_key().is_empty(),
+    )))
 }
 
-fn settings_public(settings: &Settings) -> Value {
+fn settings_public(settings: &Settings, site_key: &str, turnstile_enabled: bool) -> Value {
     json!({
         "security_path": settings.security_path,
-        "turnstile_site_key": settings.turnstile_site_key,
-        "turnstile_enabled": !settings.turnstile_secret_key.is_empty(),
+        "turnstile_site_key": site_key,
+        "turnstile_enabled": turnstile_enabled,
         "max_retries": settings.max_retries,
         "failure_threshold": settings.failure_threshold,
         "cooldown_seconds": settings.cooldown_seconds,
@@ -784,45 +855,43 @@ pub async fn save_settings(
     Json(input): Json<SettingsInput>,
 ) -> ApiResult<Value> {
     auth(&s, &h)?;
-    let existing = s.store.config()?.settings;
+    let current_site = s.turnstile_site_key();
+    let current_secret = s.turnstile_secret_key();
+    let update_site = input.turnstile_site_key.is_some();
     let submitted_secret = input.turnstile_secret_key;
+    let mut site_key = input.turnstile_site_key.unwrap_or(current_site);
+    let update_secret = submitted_secret.is_some();
+    let mut secret_key = current_secret;
     let mut settings = Settings {
         security_path: input.security_path,
-        turnstile_site_key: input
-            .turnstile_site_key
-            .unwrap_or(existing.turnstile_site_key),
-        turnstile_secret_key: existing.turnstile_secret_key,
         max_retries: input.max_retries,
         failure_threshold: input.failure_threshold,
         cooldown_seconds: input.cooldown_seconds,
         request_timeout_seconds: input.request_timeout_seconds,
         retention_days: input.retention_days,
     };
-    settings.turnstile_site_key = settings.turnstile_site_key.trim().to_owned();
+    site_key = site_key.trim().to_owned();
     if let Some(secret) = submitted_secret {
         let secret = secret.trim();
         if secret.len() > 512 || secret.chars().any(|c| c.is_control() || c.is_whitespace()) {
             return Err(bad("Cloudflare Turnstile 密钥格式无效"));
         }
-        settings.turnstile_secret_key = if secret.is_empty() {
-            settings.turnstile_site_key.clear();
-            String::new()
-        } else {
-            s.store.seal(secret)?
-        };
+        secret_key = secret.to_owned();
+        if secret_key.is_empty() {
+            site_key.clear();
+        }
     }
-    if settings.turnstile_site_key.len() > 256
-        || settings
-            .turnstile_site_key
+    if site_key.len() > 256
+        || site_key
             .chars()
             .any(|c| c.is_control() || c.is_whitespace())
     {
         return Err(bad("Cloudflare Turnstile 站点密钥格式无效"));
     }
-    if settings.turnstile_site_key.is_empty() && !settings.turnstile_secret_key.is_empty() {
+    if site_key.is_empty() && !secret_key.is_empty() {
         return Err(bad("请输入 Cloudflare Turnstile 站点密钥"));
     }
-    if !settings.turnstile_site_key.is_empty() && settings.turnstile_secret_key.is_empty() {
+    if !site_key.is_empty() && secret_key.is_empty() {
         return Err(bad("请输入 Cloudflare Turnstile 密钥"));
     }
     settings.security_path = settings.security_path.trim_matches('/').into();
@@ -851,11 +920,19 @@ pub async fn save_settings(
     {
         return Err(bad("Scheduler values are out of range"));
     }
+    if update_site || update_secret {
+        s.save_turnstile_keys(&site_key, &secret_key)
+            .map_err(|error| ApiError(StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    }
     s.store.update(|c| {
         c.settings = settings.clone();
         Ok(())
     })?;
-    Ok(Json(settings_public(&settings)))
+    Ok(Json(settings_public(
+        &settings,
+        &site_key,
+        !secret_key.is_empty(),
+    )))
 }
 #[derive(Deserialize)]
 pub struct PasswordInput {

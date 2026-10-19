@@ -20,9 +20,16 @@ services:
       RUST_LOG: "${RUST_LOG:-zakoai_proxy=info}"
       UPDATER_URL: http://updater:9000/
       UPDATER_TOKEN_FILE: /control/token
+    group_add:
+      - "${ZAKO_GID:-10001}"
     volumes:
       - zako-data:/data
       - update-control:/control:ro
+      - type: bind
+        source: ./.env
+        target: /app/.env
+        bind:
+          create_host_path: false
     depends_on:
       updater:
         condition: service_healthy

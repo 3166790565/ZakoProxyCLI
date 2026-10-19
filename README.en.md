@@ -86,6 +86,10 @@ For example, the account configuration fragment `{"models":["gpt-6-astra"],"mode
 
 System settings can configure Cloudflare Turnstile site and secret keys for login challenges; the secret is encrypted at rest and never returned by the API. The request-log paginator now supports keyboard navigation and touch-friendly controls, dashboard counts use compact formatting for large values, and coverage includes Cyber statistics beyond one thousand events.
 
+### v0.9.3 Turnstile `.env` Configuration and Release Synchronization
+
+The Turnstile site and secret keys are stored together in the project root `.env`; saving System Settings updates that file and removes obsolete database values. System Settings includes a background connectivity test with top-right toast feedback. GitHub source updates follow the latest stable Release, including synchronizing a local version that is newer than that Release.
+
 ### v0.8.0 DeepSeek API Compatibility Profiles
 
 A shared API adapter is now composed into all five exact DeepSeek model profiles, adapting dsh-purge's request-time prompt composition and context-continuity concepts to the relay. Profile selection still uses the mapped actual model and the existing Responses / Compact, Chat Completions, and Anthropic injection paths. Existing profile IDs and legacy preset recognition remain intact, and the catalog count is unchanged. The adapter uses only messages, tools, and results present in the current request; it assumes no Harness-local files, hooks, approvals, sandbox controls, cross-request memory, or permissions, and does not claim to change upstream model policy. See [profiles/dsh-purge/SOURCE.json](profiles/dsh-purge/SOURCE.json) and [third_party/dsh-purge/NOTICE.md](third_party/dsh-purge/NOTICE.md) for provenance, adaptation scope, and the MIT notice.

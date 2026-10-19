@@ -143,11 +143,7 @@ pub struct UpdateStatus {
 }
 fn response(state: AgentStatus, configured: bool, error: Option<String>) -> UpdateStatus {
     let current = env!("CARGO_PKG_VERSION");
-    let available = state.latest.as_ref().is_some_and(|r| {
-        parse_tag(&r.tag)
-            .zip(parse_tag(&format!("v{current}")))
-            .is_some_and(|(a, b)| a > b)
-    });
+    let available = state.latest.as_ref().is_some_and(|r| r.version != current);
     UpdateStatus {
         current_version: current,
         configured,
@@ -1334,21 +1330,7 @@ async fn agent_start(
     Json(input): Json<AgentStart>,
 ) -> ApiResult<AgentStatus> {
     agent_auth(&agent, &headers)?;
-    let version = parse_tag(&input.tag).ok_or_else(|| bad("Invalid release tag"))?;
-    if version < parse_tag(&format!("v{}", env!("CARGO_PKG_VERSION"))).unwrap() {
-        return Err(bad("Downgrades are not supported"));
-    }
-    let target = agent
-        .target()
-        .await
-        .map_err(|e| ApiError(StatusCode::BAD_GATEWAY, e))?;
-    if let Some(current) = target["Config"]["Labels"]["org.opencontainers.image.version"]
-        .as_str()
-        .and_then(|v| parse_tag(&format!("v{v}")))
-        && version < current
-    {
-        return Err(bad("Downgrades are not supported"));
-    }
+    parse_tag(&input.tag).ok_or_else(|| bad("Invalid release tag"))?;
     {
         let state = agent.state.lock().await;
         if state.job.as_ref().is_some_and(Job::active) {

@@ -1,6 +1,6 @@
 [package]
 name = "zakoai-proxy"
-version = "0.9.1"
+version = "0.9.3"
 edition = "2024"
 license = "MIT"
 default-run = "zakoai-proxy"
@@ -13,6 +13,7 @@ axum = { version = "0.8", features = ["macros"] }
 base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
 futures-util = "0.3"
 hex = "0.4"
 rand = "0.8"

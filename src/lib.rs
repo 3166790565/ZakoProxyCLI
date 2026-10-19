@@ -32,6 +32,9 @@ pub struct Runtime {
 }
 pub struct App {
     pub store: Store,
+    pub turnstile_site_key: std::sync::RwLock<String>,
+    pub turnstile_secret_key: std::sync::RwLock<String>,
+    pub turnstile_env_file: std::path::PathBuf,
     pub client: reqwest::Client,
     pub proxy_clients: Mutex<HashMap<String, (String, reqwest::Client)>>,
     pub runtime: Mutex<HashMap<String, Runtime>>,
@@ -55,6 +58,91 @@ impl From<String> for ApiError {
 }
 pub fn bad(message: &str) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, message.into())
+}
+impl App {
+    pub fn turnstile_site_key(&self) -> String {
+        self.turnstile_site_key.read().unwrap().clone()
+    }
+
+    pub fn turnstile_secret_key(&self) -> String {
+        self.turnstile_secret_key.read().unwrap().clone()
+    }
+
+    pub fn save_turnstile_keys(&self, site_key: &str, secret_key: &str) -> Result<(), String> {
+        let existing = match std::fs::read_to_string(&self.turnstile_env_file) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error.to_string()),
+        };
+        fn quoted(value: &str) -> String {
+            format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
+        }
+        let replacements = [
+            ("TURNSTILE_SITE_KEY", quoted(site_key)),
+            ("TURNSTILE_SECRET_KEY", quoted(secret_key)),
+        ];
+        let mut lines = Vec::new();
+        let mut replaced = [false, false];
+        for line in existing.lines() {
+            let candidate = line
+                .trim_start()
+                .strip_prefix("export ")
+                .unwrap_or(line.trim_start());
+            let key = candidate.split_once('=').map(|(key, _)| key.trim());
+            if let Some(index) =
+                key.and_then(|key| replacements.iter().position(|(name, _)| *name == key))
+            {
+                if !replaced[index] {
+                    lines.push(format!(
+                        "{}={}",
+                        replacements[index].0, replacements[index].1
+                    ));
+                    replaced[index] = true;
+                }
+            } else {
+                lines.push(line.to_owned());
+            }
+        }
+        for (index, (name, value)) in replacements.iter().enumerate() {
+            if !replaced[index] {
+                lines.push(format!("{name}={value}"));
+            }
+        }
+        let mut contents = lines.join("\n");
+        contents.push('\n');
+        use std::io::{Seek, SeekFrom, Write};
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&self.turnstile_env_file)
+            .map_err(|error| format!("Could not update project .env: {error}"))?;
+        let write_result = file
+            .set_len(0)
+            .and_then(|()| file.seek(SeekFrom::Start(0)).map(|_| ()))
+            .and_then(|()| file.write_all(contents.as_bytes()))
+            .and_then(|()| file.sync_all());
+        if let Err(error) = write_result {
+            let restore_result = file
+                .set_len(0)
+                .and_then(|()| file.seek(SeekFrom::Start(0)).map(|_| ()))
+                .and_then(|()| file.write_all(existing.as_bytes()))
+                .and_then(|()| file.sync_all());
+            if let Err(restore_error) = restore_result {
+                return Err(format!(
+                    "Could not update project .env: {error}; restoring the previous file also failed: {restore_error}"
+                ));
+            }
+            return Err(format!("Could not update project .env: {error}"));
+        }
+        *self.turnstile_site_key.write().unwrap() = site_key.to_owned();
+        *self.turnstile_secret_key.write().unwrap() = secret_key.to_owned();
+        Ok(())
+    }
 }
 pub fn unauthorized() -> ApiError {
     ApiError(StatusCode::UNAUTHORIZED, "Please sign in".into())
@@ -87,6 +175,7 @@ pub fn app(state: Shared) -> Router {
         )
         .route("/api/keys/{id}/reveal", post(api::reveal_key))
         .route("/api/settings", get(api::settings).put(api::save_settings))
+        .route("/api/settings/turnstile-test", post(api::test_turnstile))
         .route("/api/password", post(api::password))
         .route("/api/updates", get(update::status).post(update::start))
         .route("/api/updates/latest", get(update::latest))
@@ -189,8 +278,37 @@ async fn console(State(state): State<Shared>, headers: HeaderMap, uri: Uri) -> R
     }
 }
 pub fn new_app(data_dir: &std::path::Path, web_dir: std::path::PathBuf) -> Result<Shared, String> {
+    let turnstile_env_file = std::env::current_dir()
+        .map_err(|e| e.to_string())?
+        .join(".env");
+    let env_values = std::fs::read_to_string(&turnstile_env_file)
+        .ok()
+        .and_then(|contents| {
+            dotenvy::from_read_iter(contents.as_bytes())
+                .ok()
+                .map(|iter| {
+                    iter.filter_map(Result::ok)
+                        .collect::<std::collections::HashMap<_, _>>()
+                })
+        })
+        .unwrap_or_default();
     Ok(Arc::new(App {
         store: Store::open(data_dir)?,
+        turnstile_site_key: std::sync::RwLock::new(
+            env_values
+                .get("TURNSTILE_SITE_KEY")
+                .cloned()
+                .or_else(|| std::env::var("TURNSTILE_SITE_KEY").ok())
+                .unwrap_or_default(),
+        ),
+        turnstile_secret_key: std::sync::RwLock::new(
+            env_values
+                .get("TURNSTILE_SECRET_KEY")
+                .cloned()
+                .or_else(|| std::env::var("TURNSTILE_SECRET_KEY").ok())
+                .unwrap_or_default(),
+        ),
+        turnstile_env_file,
         client: reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(std::time::Duration::from_secs(15))

@@ -145,10 +145,6 @@ pub struct ApiKey {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub security_path: String,
-    #[serde(default)]
-    pub turnstile_site_key: String,
-    #[serde(default)]
-    pub turnstile_secret_key: String,
     pub max_retries: u32,
     pub failure_threshold: u32,
     pub cooldown_seconds: u32,
@@ -159,8 +155,6 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             security_path: String::new(),
-            turnstile_site_key: String::new(),
-            turnstile_secret_key: String::new(),
             max_retries: 2,
             failure_threshold: 2,
             cooldown_seconds: 60,
@@ -260,6 +254,35 @@ fn write_config(db: &Connection, config: &Config) -> Result<()> {
     .map_err(|e| e.to_string())?;
     Ok(())
 }
+fn clear_legacy_turnstile_settings(db: &Connection) -> Result<()> {
+    let Some(value) = db
+        .query_row("SELECT value FROM config WHERE id=1", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(());
+    };
+    let mut config: Value = serde_json::from_str(&value).map_err(|e| e.to_string())?;
+    let removed = config
+        .get_mut("settings")
+        .and_then(Value::as_object_mut)
+        .map(|settings| {
+            let site_removed = settings.remove("turnstile_site_key").is_some();
+            let secret_removed = settings.remove("turnstile_secret_key").is_some();
+            site_removed || secret_removed
+        })
+        .unwrap_or(false);
+    if removed {
+        db.execute(
+            "UPDATE config SET value=?1 WHERE id=1",
+            [serde_json::to_string(&config).map_err(|e| e.to_string())?],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
 fn insert_session(db: &Connection, raw: &str) -> Result<()> {
     db.execute("DELETE FROM sessions WHERE expires <= ?1", [now()])
         .map_err(|e| e.to_string())?;
@@ -309,6 +332,7 @@ impl Store {
             CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, expires INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, timestamp INTEGER NOT NULL, value TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS requests_time ON requests(timestamp);") .map_err(|e| e.to_string())?;
+        clear_legacy_turnstile_settings(&db)?;
         prune_logs(&db, read_config(&db)?.settings.retention_days)?;
         Ok(Self {
             db: Mutex::new(db),

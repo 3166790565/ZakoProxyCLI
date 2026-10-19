@@ -86,6 +86,10 @@ Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。�
 
 系统设置支持配置 Cloudflare Turnstile 站点密钥和密钥，登录时启用人机校验；密钥加密保存且不会通过 API 返回。调用日志分页器支持键盘操作和移动端触控，仪表盘对大数量统计使用紧凑显示；新增超过千条 Cyber 事件的统计覆盖测试。
 
+### v0.9.3 Turnstile `.env` 配置与 Release 同步
+
+Turnstile 站点密钥和密钥统一保存在项目根目录 `.env`，系统设置保存时会自动更新该文件；旧数据库中的 Turnstile 配置会被清理。系统设置提供后台连接测试和右上角 Toast 提示。GitHub 源码更新以最新正式 Release 为准；当本地版本高于 Release 时，更新按钮会同步到该正式版本。
+
 ### v0.8.0 DeepSeek API 兼容策略
 
 为全部五个 DeepSeek 精确模型档案组合一层共享的 API 适配提示，吸收 dsh-purge 的请求期提示组装与上下文连续性思路；策略仍按映射后的实际模型选择，并沿用现有 Responses / Compact、Chat Completions 和 Anthropic 注入链路。原 profile ID 与旧版配置识别规则保留，模型目录数量不变。适配层以当前请求实际携带的消息、工具和结果为准，不假设 Harness 本地文件、hook、审批、沙箱、跨请求记忆或权限，也不声称修改上游模型策略。来源版本、改编范围和 MIT 声明见 [profiles/dsh-purge/SOURCE.json](profiles/dsh-purge/SOURCE.json) 与 [third_party/dsh-purge/NOTICE.md](third_party/dsh-purge/NOTICE.md)。
