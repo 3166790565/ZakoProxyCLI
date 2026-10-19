@@ -129,6 +129,7 @@ jobs:
           ZAKO_PORT: "1991"
         run: |
           set -euo pipefail
+          touch .env
           docker compose up -d --no-build --wait --wait-timeout 120
           python3 - <<'PY'
           import http.cookiejar, json, secrets, tomllib, urllib.error, urllib.request
