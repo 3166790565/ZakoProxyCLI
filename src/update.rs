@@ -90,12 +90,7 @@ async fn cached_release(
 }
 
 fn merge_release(state: &mut AgentStatus, latest: Option<Release>) {
-    if let Some(latest) = latest
-        && state
-            .latest
-            .as_ref()
-            .is_none_or(|existing| parse_tag(&latest.tag) >= parse_tag(&existing.tag))
-    {
+    if let Some(latest) = latest {
         state.latest = Some(latest);
     }
 }
