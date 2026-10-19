@@ -1926,9 +1926,8 @@ td strong {
 }
 .toast {
   position: fixed;
-  bottom: 25px;
-  left: calc(50% + 112px);
-  transform: translateX(-50%);
+  top: 25px;
+  right: 25px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1943,6 +1942,11 @@ td strong {
   max-width: calc(100vw - 40px);
   width: max-content;
   min-height: 43px;
+}
+.turnstile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 .toast > span {
   overflow-wrap: anywhere;
@@ -2801,7 +2805,7 @@ td strong {
     padding-left: 0;
   }
   .toast {
-    left: calc(50% + 101px);
+    right: 20px;
   }
   th,
   td {
@@ -2959,7 +2963,7 @@ td strong {
     display: inline;
   }
   .toast {
-    left: calc(50% + 104px);
+    right: 18px;
   }
   .list-toolbar {
     padding: 14px;
@@ -3433,8 +3437,8 @@ td strong {
     font-size: 12px;
   }
   .toast {
-    left: 50%;
-    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    top: calc(15px + env(safe-area-inset-top, 0px));
+    right: 15px;
     font-size: 11px;
     max-width: calc(100vw - 30px);
   }

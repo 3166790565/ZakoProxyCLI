@@ -6,6 +6,7 @@ import {
   Fingerprint,
   KeyRound,
   LockKeyhole,
+  PlugZap,
   Route,
   Save,
   ShieldCheck,
@@ -37,6 +38,7 @@ export function SettingsPage({
   );
   const [turnstileSecret, setTurnstileSecret] = useState("");
   const [turnstileClear, setTurnstileClear] = useState(false);
+  const [turnstileTestBusy, setTurnstileTestBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -108,6 +110,20 @@ export function SettingsPage({
       setPasswordError(errorMessage(failure));
     } finally {
       setPasswordBusy(false);
+    }
+  }
+  async function testTurnstile() {
+    setTurnstileTestBusy(true);
+    try {
+      await api("/settings/turnstile-test", "POST", {
+        turnstile_site_key: form.turnstile_site_key,
+        ...(turnstileSecret ? { turnstile_secret_key: turnstileSecret } : {}),
+      });
+      notify("Cloudflare Turnstile 连接正常");
+    } catch (failure) {
+      notify(errorMessage(failure), true);
+    } finally {
+      setTurnstileTestBusy(false);
     }
   }
   return (
@@ -236,17 +252,24 @@ export function SettingsPage({
                   maxLength={512}
                 />
               </Field>
-              {state.settings.turnstile_enabled && (
-                <Button
-                  type="button"
-                  onClick={() => {
-                    setTurnstileClear(true);
-                    setTurnstileSecret("");
-                  }}
-                >
-                  清除 Cloudflare Turnstile
+              <div className="turnstile-actions">
+                <Button type="button" onClick={() => void testTurnstile()} busy={turnstileTestBusy}>
+                  <PlugZap size={15} />
+                  测试连接
                 </Button>
-              )}
+                {state.settings.turnstile_enabled && (
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setTurnstileClear(true);
+                      setTurnstileSecret("");
+                      notify("已标记清除 Turnstile 密钥，请保存更改");
+                    }}
+                  >
+                    清除 Cloudflare Turnstile
+                  </Button>
+                )}
+              </div>
             </div>
           </section>
           <section className="settings-section">

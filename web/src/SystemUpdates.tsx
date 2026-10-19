@@ -201,8 +201,7 @@ export function SystemUpdates({
   const running = isRunning(job);
   const stageIndex = stages.findIndex((stage) => stage.id === job?.status);
   const latest = status?.latest;
-  const rebuild = !!latest && latest.version === status?.current_version;
-  const canUpdate = status?.update_available || rebuild;
+  const canUpdate = !!latest && latest.version !== status?.current_version;
   const succeeded = job?.status === "succeeded";
   const rolledBack = job?.status === "rolled_back";
   const failed = job?.status === "failed";
@@ -249,10 +248,7 @@ export function SystemUpdates({
                 ) : (
                   <span className="muted">待检查</span>
                 )}
-                {rebuild && !running && <Badge variant="green">已是最新</Badge>}
-                {latest && !canUpdate && !running && (
-                  <Badge>当前版本较新</Badge>
-                )}
+                {!canUpdate && !running && <Badge variant="green">已是最新</Badge>}
                 {status?.update_available && (
                   <Badge variant="amber">可更新</Badge>
                 )}
@@ -285,7 +281,7 @@ export function SystemUpdates({
               }}
             >
               <ArrowUpToLine size={15} />
-              {rebuild ? "重新构建" : "构建并更新"}
+              {"同步到最新发行版"}
             </Button>
           </div>
         </div>
