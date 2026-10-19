@@ -285,11 +285,8 @@ pub fn new_app(data_dir: &std::path::Path, web_dir: std::path::PathBuf) -> Resul
         .ok()
         .and_then(|contents| {
             dotenvy::from_read_iter(contents.as_bytes())
+                .collect::<std::result::Result<std::collections::HashMap<_, _>, _>>()
                 .ok()
-                .map(|iter| {
-                    iter.filter_map(Result::ok)
-                        .collect::<std::collections::HashMap<_, _>>()
-                })
         })
         .unwrap_or_default();
     Ok(Arc::new(App {
