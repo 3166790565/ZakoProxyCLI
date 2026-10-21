@@ -2058,7 +2058,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unavailable_fallback_keeps_original_upstream_error() {
+    async fn cooled_fallback_retries_unless_concurrency_blocked_and_preserves_upstream_error() {
         use axum::routing::post;
         let (endpoint, _server) = serve(axum::Router::new().route(
             "/v1/responses",
@@ -2071,29 +2071,43 @@ mod tests {
             }),
         ))
         .await;
-        let (_dir, state) = fixture(&[endpoint.clone(), endpoint]);
-        state
-            .runtime
-            .lock()
-            .unwrap()
-            .entry("account-1".into())
-            .or_default()
-            .cooldown_until = store::now() + 100;
-        let response = call(
-            state.clone(),
-            "/v1/responses",
-            json!({"model":"chosen","input":"hello"}),
-        )
-        .await;
-        assert_eq!(response.status(), 503);
-        assert_eq!(response.headers()["retry-after"], "23");
-        let body = axum::body::to_bytes(response.into_body(), 4096)
-            .await
-            .unwrap();
-        assert_eq!(&body[..], b"original upstream failure");
-        let logs = state.store.logs(0, store::now() + 10).unwrap();
-        assert_eq!(logs[0].status, 503);
-        assert_eq!(logs[0].attempts, 1);
+        for fallback_busy in [false, true] {
+            let (_dir, state) = fixture(&[endpoint.clone(), endpoint.clone()]);
+            state
+                .store
+                .update(|config| {
+                    config.accounts[1].concurrency = 1;
+                    Ok(())
+                })
+                .unwrap();
+            state.runtime.lock().unwrap().insert(
+                "account-1".into(),
+                crate::Runtime {
+                    active: u32::from(fallback_busy),
+                    cooldown_until: store::now() + 100,
+                    ..Default::default()
+                },
+            );
+            let response = call(
+                state.clone(),
+                "/v1/responses",
+                json!({"model":"chosen","input":"hello"}),
+            )
+            .await;
+            assert_eq!(response.status(), 503);
+            assert_eq!(response.headers()["retry-after"], "23");
+            let body = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            assert_eq!(&body[..], b"original upstream failure");
+            let logs = state.store.logs(0, store::now() + 10).unwrap();
+            assert_eq!(logs[0].status, 503);
+            assert_eq!(logs[0].attempts, if fallback_busy { 1 } else { 2 });
+            assert_eq!(
+                state.runtime.lock().unwrap()["account-1"].active,
+                u32::from(fallback_busy)
+            );
+        }
     }
 
     #[tokio::test]
