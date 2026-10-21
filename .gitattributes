@@ -7,3 +7,6 @@ third_party/hanshuang/* text eol=lf whitespace=-blank-at-eof
 scripts/import-hanshuang.py text eol=lf
 profiles/default.md text eol=lf
 profiles/default.SOURCE.json text eol=lf
+profiles/ai-jailbreak/* text eol=lf
+third_party/ai-jailbreak/* text eol=lf whitespace=-blank-at-eof
+scripts/import-ai-jailbreak.py text eol=lf

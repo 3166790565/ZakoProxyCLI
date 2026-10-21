@@ -480,8 +480,16 @@ async fn chat_protocol_can_be_saved_and_is_enabled_by_default() {
 #[tokio::test]
 async fn group_profile_limit_uses_catalog_size_after_deduplication() {
     let (_dir, state) = fixture();
+    let mut models = std::collections::HashSet::new();
     let ids: Vec<_> = profiles::all()
         .iter()
+        .filter(|profile| {
+            if profile.models.iter().any(|model| models.contains(model)) {
+                return false;
+            }
+            models.extend(profile.models.iter().cloned());
+            true
+        })
         .map(|profile| profile.id.clone())
         .collect();
     let duplicate_ids: Vec<_> = ids.iter().chain(&ids).cloned().collect();

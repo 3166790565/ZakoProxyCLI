@@ -8,7 +8,6 @@ import {
   ChevronRight,
   Clock3,
   Database,
-  Download,
   Gauge,
   Layers3,
   RefreshCw,
@@ -144,30 +143,6 @@ export function Dashboard({
     }
     setQuery({ from, to });
   }
-  function exportDaily() {
-    const csv = [
-      "date,input_tokens,output_tokens,cached_tokens,total_requests,success_count,cyber_count",
-      ...stats.daily.map((row) =>
-        [
-          row.date,
-          row.input_tokens,
-          row.output_tokens,
-          row.cached_tokens,
-          row.total_requests,
-          row.success_count,
-          row.cyber_count,
-        ].join(","),
-      ),
-    ].join("\r\n");
-    const url = URL.createObjectURL(
-      new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }),
-    );
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `zako-usage-${query.from}-${query.to}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }
   return (
     <>
       <div className="page-heading">
@@ -179,10 +154,6 @@ export function Dashboard({
           </h1>
           <p>用量、性能与请求状态</p>
         </div>
-        <Button onClick={exportDaily} disabled={loading}>
-          <Download size={16} />
-          导出数据
-        </Button>
       </div>
       <div className="dashboard-toolbar">
         <div className="segmented" aria-label="查询时间范围">

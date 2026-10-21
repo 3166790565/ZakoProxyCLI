@@ -315,6 +315,7 @@ fn select_account<'a>(
     accounts: &'a [Account],
     tried: &HashSet<String>,
 ) -> Result<(&'a Account, Admission), AdmissionError> {
+    release_cooldowns_if_pool_blocked(state, accounts)?;
     let mut blocked = None;
     for account in accounts
         .iter()
@@ -332,6 +333,37 @@ fn select_account<'a>(
         }
     }
     Err(blocked.unwrap_or(AdmissionError::Exhausted))
+}
+
+fn release_cooldowns_if_pool_blocked(
+    state: &Shared,
+    accounts: &[Account],
+) -> Result<(), AdmissionError> {
+    let mut runtime = state
+        .runtime
+        .lock()
+        .map_err(|_| AdmissionError::Unavailable)?;
+    let now = store::now();
+    if accounts.len() == 1 {
+        let account = runtime.entry(accounts[0].id.clone()).or_default();
+        if account.cooldown_until != 0 {
+            account.cooldown_until = 0;
+            account.failures = 0;
+        }
+    } else if !accounts.is_empty()
+        && accounts.iter().all(|account| {
+            runtime
+                .get(&account.id)
+                .is_some_and(|status| status.cooldown_until > now)
+        })
+    {
+        for account in accounts {
+            let status = runtime.get_mut(&account.id).unwrap();
+            status.cooldown_until = 0;
+            status.failures = 0;
+        }
+    }
+    Ok(())
 }
 
 fn admit(state: &Shared, account: &Account) -> Result<Admission, AdmissionError> {
@@ -368,7 +400,13 @@ fn admit(state: &Shared, account: &Account) -> Result<Admission, AdmissionError>
     })
 }
 
-fn health(state: &Shared, account_id: &str, settings: &Settings, success: bool) {
+fn health(
+    state: &Shared,
+    account_id: &str,
+    settings: &Settings,
+    success: bool,
+    cooldown_enabled: bool,
+) {
     if let Ok(mut runtime) = state.runtime.lock() {
         let runtime = runtime.entry(account_id.to_owned()).or_default();
         if success {
@@ -376,8 +414,10 @@ fn health(state: &Shared, account_id: &str, settings: &Settings, success: bool) 
             runtime.cooldown_until = 0;
         } else {
             runtime.failures = runtime.failures.saturating_add(1);
-            if runtime.failures >= settings.failure_threshold.max(1) {
+            if cooldown_enabled && runtime.failures >= settings.failure_threshold.max(1) {
                 runtime.cooldown_until = store::now() + i64::from(settings.cooldown_seconds);
+            } else if !cooldown_enabled {
+                runtime.cooldown_until = 0;
             }
         }
     }
@@ -500,6 +540,7 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
             "No account supports this group, model, and protocol",
         );
     }
+    let cooldown_enabled = accounts.len() > 1;
     let mut tried = HashSet::new();
     let mut reserved = None;
     let attempts = config.settings.max_retries.saturating_add(1);
@@ -560,7 +601,13 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
             Err(_) => {
                 log.entry.status = 502;
                 log.set_error("Invalid upstream endpoint configuration");
-                health(&state, &account.id, &config.settings, false);
+                health(
+                    &state,
+                    &account.id,
+                    &config.settings,
+                    false,
+                    cooldown_enabled,
+                );
                 continue;
             }
         };
@@ -569,7 +616,13 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
             Err(_) => {
                 log.entry.status = 502;
                 log.set_error("Could not decrypt the upstream API key");
-                health(&state, &account.id, &config.settings, false);
+                health(
+                    &state,
+                    &account.id,
+                    &config.settings,
+                    false,
+                    cooldown_enabled,
+                );
                 continue;
             }
         };
@@ -579,7 +632,13 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
             Err(_) => {
                 log.entry.status = 502;
                 log.set_error("Could not configure the upstream network client");
-                health(&state, &account.id, &config.settings, false);
+                health(
+                    &state,
+                    &account.id,
+                    &config.settings,
+                    false,
+                    cooldown_enabled,
+                );
                 continue;
             }
         };
@@ -626,7 +685,13 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
                 } else {
                     "Upstream request transport failed before response headers"
                 });
-                health(&state, &account.id, &config.settings, false);
+                health(
+                    &state,
+                    &account.id,
+                    &config.settings,
+                    false,
+                    cooldown_enabled,
+                );
                 continue;
             }
         };
@@ -639,7 +704,13 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
                 | StatusCode::TOO_MANY_REQUESTS
         ) || status.is_server_error();
         if retryable {
-            health(&state, &account.id, &config.settings, false);
+            health(
+                &state,
+                &account.id,
+                &config.settings,
+                false,
+                cooldown_enabled,
+            );
             if log.entry.attempts < attempts {
                 reserved = select_account(&state, &accounts, &tried).ok();
                 if reserved.is_some() {
@@ -706,7 +777,7 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
                             log.entry.status = if observer.failed { 502 } else { status.as_u16() };
                             let healthy = !observer.failed;
                             if health_recorded.is_none() || (health_recorded == Some(true) && !healthy) {
-                                health(&stream_state, &account_id, &settings, healthy);
+                                health(&stream_state, &account_id, &settings, healthy, cooldown_enabled);
                                 health_recorded = Some(healthy);
                             }
                         }
@@ -752,7 +823,7 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
             }
             let healthy = log.entry.status < 400;
             if status.is_success() && (health_recorded.is_none() || (health_recorded == Some(true) && !healthy)) {
-                health(&stream_state, &account_id, &settings, healthy);
+                health(&stream_state, &account_id, &settings, healthy, cooldown_enabled);
             }
             admission.take();
             let tail = redactor.finish();
@@ -1459,8 +1530,102 @@ mod tests {
                 ..Default::default()
             },
             false,
+            true,
         );
         assert!(state.runtime.lock().unwrap()["a"].cooldown_until > store::now());
+    }
+
+    #[test]
+    fn single_account_pool_clears_cooldown_and_never_reenters_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::new_app(dir.path(), dir.path().into()).unwrap();
+        let account = Account {
+            id: "only".into(),
+            ..Default::default()
+        };
+        let settings = Settings {
+            failure_threshold: 1,
+            ..Default::default()
+        };
+
+        health(&state, "only", &settings, false, false);
+        assert_eq!(state.runtime.lock().unwrap()["only"].cooldown_until, 0);
+
+        {
+            let mut runtime = state.runtime.lock().unwrap();
+            runtime.get_mut("only").unwrap().cooldown_until = store::now() + 60;
+        }
+        let accounts = [account];
+        let (selected, admission) = select_account(&state, &accounts, &HashSet::new()).unwrap();
+        assert_eq!(selected.id, "only");
+        let runtime = state.runtime.lock().unwrap();
+        assert_eq!(runtime["only"].cooldown_until, 0);
+        assert_eq!(runtime["only"].failures, 0);
+        drop(runtime);
+        drop(admission);
+    }
+
+    #[test]
+    fn all_cooled_accounts_are_released_as_a_pool() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::new_app(dir.path(), dir.path().into()).unwrap();
+        let accounts = [
+            Account {
+                id: "a".into(),
+                ..Default::default()
+            },
+            Account {
+                id: "b".into(),
+                ..Default::default()
+            },
+        ];
+        {
+            let mut runtime = state.runtime.lock().unwrap();
+            for id in ["a", "b"] {
+                let status = runtime.entry(id.into()).or_default();
+                status.failures = 3;
+                status.cooldown_until = store::now() + 60;
+            }
+        }
+
+        let (selected, admission) = select_account(&state, &accounts, &HashSet::new()).unwrap();
+        assert_eq!(selected.id, "a");
+        let runtime = state.runtime.lock().unwrap();
+        for id in ["a", "b"] {
+            assert_eq!(runtime[id].cooldown_until, 0);
+            assert_eq!(runtime[id].failures, 0);
+        }
+        drop(runtime);
+        drop(admission);
+    }
+
+    #[test]
+    fn a_partially_cooled_pool_keeps_cooldown_and_selects_available_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::new_app(dir.path(), dir.path().into()).unwrap();
+        let accounts = [
+            Account {
+                id: "a".into(),
+                ..Default::default()
+            },
+            Account {
+                id: "b".into(),
+                ..Default::default()
+            },
+        ];
+        state.runtime.lock().unwrap().insert(
+            "a".into(),
+            crate::Runtime {
+                failures: 2,
+                cooldown_until: store::now() + 60,
+                ..Default::default()
+            },
+        );
+
+        let (selected, admission) = select_account(&state, &accounts, &HashSet::new()).unwrap();
+        assert_eq!(selected.id, "b");
+        assert!(state.runtime.lock().unwrap()["a"].cooldown_until > store::now());
+        drop(admission);
     }
 
     struct Server(tokio::task::JoinHandle<()>);

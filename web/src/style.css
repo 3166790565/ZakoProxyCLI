@@ -828,19 +828,20 @@ td strong { font-weight: 700; color: var(--ink); }
 .profile-option {
   position: relative;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
   min-width: 0;
   min-height: 56px;
   padding: 12px;
   border: 1.5px solid var(--line);
   border-radius: var(--radius-sm);
   background: #fff;
-  cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
+.profile-choice { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; cursor: pointer; }
 .profile-option:has(input:checked) { border-color: var(--pink-400); background: var(--pink-50); box-shadow: 0 6px 14px -10px rgb(214 55 122 / 70%); }
 .profile-option:has(input:focus-visible) { z-index: 1; outline: 2px solid var(--pink-500); outline-offset: -2px; }
 .profile-option:active { background: var(--pink-100); }
@@ -851,6 +852,11 @@ td strong { font-weight: 700; color: var(--ink); }
 .profile-option input:checked + .profile-checkbox > svg { visibility: visible; }
 .profile-description { flex: 1; min-width: 0; }
 .profile-description > strong { font-size: 13px; font-weight: 700; line-height: 1.4; color: var(--ink); overflow-wrap: anywhere; }
+.profile-variant { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.profile-metadata { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding-left: 30px; color: var(--muted); font-size: 11px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.profile-validation { color: var(--ink); }
+.profile-metadata a { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; max-width: 100%; color: var(--pink-600); overflow-wrap: anywhere; }
+.profile-metadata a:focus-visible { outline: 2px solid var(--pink-500); outline-offset: 2px; border-radius: 2px; }
 .profile-fieldset:disabled .profile-option { opacity: 0.6; cursor: wait; }
 .default-strategy-setting { display: grid; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1.5px dashed var(--line-strong); }
 .default-strategy-setting .toggle-label { width: fit-content; max-width: 100%; min-height: 32px; }

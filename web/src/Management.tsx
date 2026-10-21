@@ -157,6 +157,13 @@ function profileDisplayModels(profile: Profile) {
     : profile.models;
 }
 
+function profileVariantLabel(profile: Profile) {
+  if (profile.metadata?.variant === "lightweight-api")
+    return "AI-Jailbreak · 轻量实验版";
+  if (profile.id.startsWith("coldcoffee-")) return "冷咖啡 · 原版";
+  return profile.name;
+}
+
 export function GroupsPage({ state, reload, notify }: PageProps) {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Group | "new" | null>(null);
@@ -363,6 +370,29 @@ function GroupForm({
   const [profileSearch, setProfileSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const profileDetails = useMemo(() => {
+    const modelCounts = new Map<string, number>();
+    for (const profile of state.profiles) {
+      for (const model of profile.models)
+        modelCounts.set(model, (modelCounts.get(model) || 0) + 1);
+    }
+    const encoder = new TextEncoder();
+    return new Map(
+      state.profiles
+        .filter(
+          (profile) =>
+            profile.metadata ||
+            profile.models.some((model) => (modelCounts.get(model) || 0) > 1),
+        )
+        .map((profile) => [
+          profile.id,
+          {
+            variant: profileVariantLabel(profile),
+            bytes: encoder.encode(profile.instruction).length,
+          },
+        ]),
+    );
+  }, [state.profiles]);
   const visibleProfiles = useMemo(() => {
     const query = profileSearch.trim().toLowerCase();
     return [...state.profiles]
@@ -372,10 +402,16 @@ function GroupForm({
             profileDisplayModels(a).join(" · "),
             profileDisplayModels(b).join(" · "),
           ) ||
+          Number(Boolean(a.metadata)) - Number(Boolean(b.metadata)) ||
           modelNameOrder.compare(a.id, b.id),
       )
       .filter((item) =>
-        item.models.some((model) => model.toLowerCase().includes(query)),
+        [
+          ...item.models,
+          item.name,
+          profileVariantLabel(item),
+          item.metadata?.source_url || "",
+        ].some((value) => value.toLowerCase().includes(query)),
       );
   }, [state.profiles, profileSearch]);
   async function submit(event: FormEvent) {
@@ -443,36 +479,79 @@ function GroupForm({
               placeholder="搜索破甲策略"
             />
             <span className="profile-results" role="status">
-              显示 {visibleProfiles.length} / {state.profiles.length} 个模型
+              显示 {visibleProfiles.length} / {state.profiles.length} 个策略
             </span>
           </div>
           <div
             className="profile-options"
             role="region"
-            aria-label="破甲策略模型列表"
+            aria-label="破甲策略列表"
             tabIndex={0}
           >
-            {visibleProfiles.map((item) => (
-              <label className="profile-option" key={item.id}>
-                <input
-                  type="checkbox"
-                  checked={profiles.includes(item.id)}
-                  onChange={(event) =>
-                    setProfiles(
-                      event.target.checked
-                        ? [...profiles, item.id]
-                        : profiles.filter((id) => id !== item.id),
-                    )
-                  }
-                />
-                <span className="profile-checkbox" aria-hidden="true">
-                  <Check size={13} strokeWidth={2.5} />
-                </span>
-                <span className="profile-description">
-                  <strong>{profileDisplayModels(item).join(" · ")}</strong>
-                </span>
-              </label>
-            ))}
+            {visibleProfiles.map((item) => {
+              const details = profileDetails.get(item.id);
+              return (
+                <div className="profile-option" key={item.id}>
+                  <label className="profile-choice">
+                    <input
+                      type="checkbox"
+                      checked={profiles.includes(item.id)}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setProfiles((current) => {
+                          if (!checked)
+                            return current.filter((id) => id !== item.id);
+                          const overlapping = new Set(
+                            state.profiles
+                              .filter((profile) =>
+                                profile.models.some((model) =>
+                                  item.models.includes(model),
+                                ),
+                              )
+                              .map((profile) => profile.id),
+                          );
+                          return [
+                            ...current.filter((id) => !overlapping.has(id)),
+                            item.id,
+                          ];
+                        });
+                      }}
+                    />
+                    <span className="profile-checkbox" aria-hidden="true">
+                      <Check size={13} strokeWidth={2.5} />
+                    </span>
+                    <span className="profile-description">
+                      <strong>{profileDisplayModels(item).join(" · ")}</strong>
+                      {details && (
+                        <span className="profile-variant">{details.variant}</span>
+                      )}
+                    </span>
+                  </label>
+                  {details && (
+                    <div className="profile-metadata">
+                      {item.metadata?.validation === "unverified" && (
+                        <span className="profile-validation">未实测</span>
+                      )}
+                      <span title={`UTF-8 正文：${details.bytes} 字节`}>
+                        {(details.bytes / 1024).toFixed(1)} KiB
+                      </span>
+                      {item.metadata && (
+                        <a
+                          href={item.metadata.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={`来源版本：${item.metadata.source_revision}`}
+                          aria-label={`${item.models.join("、")} 策略来源，版本 ${item.metadata.source_revision}`}
+                        >
+                          <ExternalLink size={12} aria-hidden="true" />
+                          {item.metadata.source_revision.slice(0, 7)}
+                        </a>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             {visibleProfiles.length === 0 && (
               <p className="profile-empty">
                 {state.profiles.length === 0

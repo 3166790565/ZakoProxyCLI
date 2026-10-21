@@ -13,6 +13,16 @@ pub struct Profile {
     pub instruction: String,
     #[serde(default)]
     pub model_family: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<ProfileMetadata>,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct ProfileMetadata {
+    pub source_url: String,
+    pub source_revision: String,
+    pub variant: String,
+    pub validation: String,
 }
 
 pub fn model_family(model: &str) -> Option<&'static str> {
@@ -67,6 +77,18 @@ pub fn all() -> &'static [Profile] {
                 .expect("Embedded kimi-break catalog must be valid JSON");
         for mut profile in kimi {
             profile.instruction = include_str!("../profiles/kimi-break/system.md").into();
+            profiles.push(profile);
+        }
+        let ai_jailbreak: Vec<Profile> =
+            serde_json::from_str(include_str!("../profiles/ai-jailbreak/index.json"))
+                .expect("Embedded AI-Jailbreak catalog must be valid JSON");
+        for mut profile in ai_jailbreak {
+            profile.instruction = match profile.model_family.as_str() {
+                "glm" => include_str!("../profiles/ai-jailbreak/glm.md"),
+                "grok" => include_str!("../profiles/ai-jailbreak/grok.md"),
+                _ => panic!("Unsupported AI-Jailbreak model family"),
+            }
+            .into();
             profiles.push(profile);
         }
         let mut ids = std::collections::HashSet::new();
@@ -152,9 +174,13 @@ mod tests {
             ("GPT-6", None),
             ("claude-opus-5-5", Some("claude")),
             ("grok-4.7", Some("grok")),
+            ("grok-4.6", Some("grok")),
+            ("grok-build", Some("grok")),
             ("gemini-3.1-pro-preview", Some("gemini")),
             ("deepseek-v4.1-flash", Some("deepseek")),
             ("glm-5.3", Some("glm")),
+            ("glm-5.3-flash", Some("glm")),
+            ("glm-5.3-air", Some("glm")),
             ("kimi-k2.7-code", Some("kimi")),
             ("kimilike-k3", None),
             ("claudelike-5", None),
@@ -170,7 +196,7 @@ mod tests {
         let entries: Vec<serde_json::Value> =
             serde_json::from_str(include_str!("../profiles/coldcoffee/index.json")).unwrap();
         assert_eq!(entries.len(), 28);
-        assert_eq!(all().len(), 36);
+        assert_eq!(all().len(), 42);
         let mut models = std::collections::HashSet::new();
         for entry in entries {
             let profile = find(entry["id"].as_str().unwrap()).unwrap();
@@ -215,6 +241,65 @@ mod tests {
         assert!(models.contains("claude-fable-5-1"));
         assert!(models.contains("deepseek-v4-pro-0813"));
         assert!(models.contains("glm-5.3"));
+    }
+
+    #[test]
+    fn ai_jailbreak_profiles_are_opt_in_exact_model_variants() {
+        let expected = [
+            "glm-5.3",
+            "glm-5.3-flash",
+            "glm-5.3-air",
+            "grok-4.7",
+            "grok-4.6",
+            "grok-build",
+        ];
+        let actual: std::collections::BTreeSet<_> = all()
+            .iter()
+            .filter(|profile| profile.id.starts_with("aijailbreak-"))
+            .flat_map(|profile| profile.models.iter().map(String::as_str))
+            .collect();
+        assert_eq!(actual, expected.into_iter().collect());
+        for model in expected {
+            let profile = find(&format!("aijailbreak-{model}-v1")).unwrap();
+            assert_eq!(profile.models, [model]);
+            let metadata = profile.metadata.as_ref().unwrap();
+            assert_eq!(metadata.variant, "lightweight-api");
+            assert_eq!(metadata.validation, "unverified");
+            assert_eq!(
+                metadata.source_revision,
+                "8c278b10f47f305546a52d7a0ce044d2c643dc71"
+            );
+            assert!(metadata.source_url.contains(&metadata.source_revision));
+            let group = Group {
+                profile_ids: vec![profile.id.clone()],
+                ..Default::default()
+            };
+            assert_eq!(
+                instruction(&group, model),
+                Some(profile.instruction.as_str())
+            );
+            assert!(instruction(&group, &model.to_uppercase()).is_none());
+            assert!(instruction(&group, &format!("{model}-unlisted")).is_none());
+            assert!(instruction(&Group::default(), model).is_none());
+            let fallback = Group {
+                default_strategy_enabled: true,
+                ..Default::default()
+            };
+            assert_eq!(instruction(&fallback, model), Some(DEFAULT_INSTRUCTION));
+        }
+        for (model, original) in [
+            ("glm-5.3", include_str!("../profiles/coldcoffee/glm53.md")),
+            ("grok-4.7", include_str!("../profiles/coldcoffee/grok.md")),
+        ] {
+            let legacy = find(&format!("coldcoffee-{model}-v1")).unwrap();
+            assert_eq!(legacy.instruction, original);
+            assert!(legacy.metadata.is_none());
+            let group = Group {
+                profile_ids: vec![legacy.id.clone()],
+                ..Default::default()
+            };
+            assert_eq!(instruction(&group, model), Some(original));
+        }
     }
 
     #[test]

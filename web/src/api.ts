@@ -166,6 +166,12 @@ export type Profile = {
   model_family: string;
   models: string[];
   instruction: string;
+  metadata?: {
+    source_url: string;
+    source_revision: string;
+    variant: string;
+    validation: string;
+  };
 };
 export type State = {
   groups: Group[];

@@ -15,6 +15,21 @@ fn fixture() -> (tempfile::TempDir, Shared) {
     (dir, state)
 }
 
+fn nonoverlapping_profile_ids() -> Vec<String> {
+    let mut models = std::collections::HashSet::new();
+    profiles::all()
+        .iter()
+        .filter(|profile| {
+            if profile.models.iter().any(|model| models.contains(model)) {
+                return false;
+            }
+            models.extend(profile.models.iter().cloned());
+            true
+        })
+        .map(|profile| profile.id.clone())
+        .collect()
+}
+
 #[tokio::test]
 async fn local_fonts_have_font_mime_type() {
     let (dir, s) = fixture();
@@ -575,11 +590,13 @@ async fn profile_selections_validate_edit_and_persist_across_restart() {
         assert_eq!(entry["models"], json!(profile.models));
         assert_eq!(entry["instruction"], profile.instruction);
         assert_eq!(entry["model_family"], profile.model_family);
+        if let Some(metadata) = &profile.metadata {
+            assert_eq!(entry["metadata"], json!(metadata));
+        } else {
+            assert!(entry.get("metadata").is_none());
+        }
     }
-    let ids: Vec<_> = profiles::all()
-        .iter()
-        .map(|profile| profile.id.clone())
-        .collect();
+    let ids = nonoverlapping_profile_ids();
     for invalid in [
         json!(["unknown-profile"]),
         Value::Null,
@@ -649,6 +666,59 @@ async fn profile_selections_validate_edit_and_persist_across_restart() {
     .await;
     assert_eq!(status, StatusCode::OK, "{cleared}");
     assert_eq!(cleared["profile_ids"], json!([]));
+}
+
+#[tokio::test]
+async fn overlapping_strategy_variants_are_rejected_without_mutating_groups() {
+    let (_dir, s) = fixture();
+    let cookie = setup(&s).await;
+    for model in ["glm-5.3", "grok-4.7"] {
+        let legacy = format!("coldcoffee-{model}-v1");
+        let lightweight = format!("aijailbreak-{model}-v1");
+        let (status, created, _) = request(
+            &s,
+            "POST",
+            "/api/groups",
+            json!({"name":"Original", "profile_ids":[legacy, legacy], "default_strategy_enabled":true}),
+            &cookie,
+            "/",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        assert_eq!(created["profile_ids"], json!([legacy]));
+        let path = format!("/api/groups/{}", created["id"].as_str().unwrap());
+        let (_, before, _) = request(&s, "GET", "/api/groups", Value::Null, &cookie, "/").await;
+        for (method, path) in [("POST", "/api/groups"), ("PUT", path.as_str())] {
+            let (status, rejected, _) = request(
+                &s,
+                method,
+                path,
+                json!({"name":"Rejected edit", "profile_ids":[legacy, lightweight], "default_strategy_enabled":false}),
+                &cookie,
+                "/",
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected}");
+            assert_eq!(
+                rejected["error"],
+                format!("Only one instruction profile may target model {model}")
+            );
+            let (_, after, _) = request(&s, "GET", "/api/groups", Value::Null, &cookie, "/").await;
+            assert_eq!(after, before);
+        }
+        let (status, switched, _) = request(
+            &s,
+            "PUT",
+            &path,
+            json!({"name":"Lightweight", "profile_ids":[lightweight, lightweight]}),
+            &cookie,
+            "/",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{switched}");
+        assert_eq!(switched["profile_ids"], json!([lightweight]));
+        assert_eq!(switched["default_strategy_enabled"], true);
+    }
 }
 
 #[tokio::test]
@@ -763,7 +833,7 @@ async fn selected_profiles_route_both_protocols_without_cross_model_injection() 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let profile_ids: Vec<_> = profiles::all().iter().map(|profile| &profile.id).collect();
+    let profile_ids = nonoverlapping_profile_ids();
     let (status, group, _) = request(&s, "POST", "/api/groups", json!({"name":"Multi models","profile_ids":profile_ids,"models":["custom-model"],"instruction":"Custom fallback"}), &cookie, "/").await;
     assert_eq!(status, StatusCode::OK, "{group}");
     let gid = group["id"].as_str().unwrap();
@@ -989,7 +1059,7 @@ async fn mapped_models_apply_actual_strategy_and_advertise_valid_aliases() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let ids: Vec<_> = profiles::all().iter().map(|profile| &profile.id).collect();
+    let ids = nonoverlapping_profile_ids();
     let (status, group, _) = request(
         &s,
         "POST",

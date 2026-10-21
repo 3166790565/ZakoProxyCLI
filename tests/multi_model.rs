@@ -224,19 +224,23 @@ async fn all_catalog_models_inject_native_instructions_without_mutating_client_c
     let catalog = profiles::all();
     assert_eq!(
         catalog.len(),
-        36,
-        "expected three GPT, 27 Coldcoffee, two Hanshuang, and four Kimi profiles"
+        42,
+        "expected three GPT, 27 Coldcoffee, two Hanshuang, four Kimi, and six AI-Jailbreak profiles"
     );
     assert_eq!(
         catalog
             .iter()
             .map(|profile| profile.models.len())
             .sum::<usize>(),
-        37
+        43
     );
-    select_profiles(
-        &state,
-        catalog.iter().map(|profile| profile.id.clone()).collect(),
+    assert_eq!(
+        catalog
+            .iter()
+            .flat_map(|profile| &profile.models)
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        41
     );
 
     let captured = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
@@ -278,6 +282,7 @@ async fn all_catalog_models_inject_native_instructions_without_mutating_client_c
     );
 
     for profile in catalog {
+        select_profiles(&state, vec![profile.id.clone()]);
         for actual_model in &profile.models {
             for protocol in ["responses", "compact", "chat", "anthropic"] {
                 let body = original_body(protocol, actual_model);
@@ -298,6 +303,52 @@ async fn all_catalog_models_inject_native_instructions_without_mutating_client_c
     }
     assert_eq!(captured.lock().unwrap().len(), model_ids.len() * 4);
     assert_eq!(logs(&state).len(), model_ids.len() * 4);
+}
+
+#[tokio::test]
+async fn new_glm_and_grok_aliases_select_actual_model_profiles_on_all_protocols() {
+    let (_dir, state) = fixture();
+    let models = ["glm-5.3-flash", "glm-5.3-air", "grok-4.6", "grok-build"];
+    select_profiles(
+        &state,
+        models
+            .iter()
+            .map(|model| format!("aijailbreak-{model}-v1"))
+            .collect(),
+    );
+    let router = Router::new()
+        .route("/v1/responses", post(echo))
+        .route("/v1/responses/compact", post(echo))
+        .route("/v1/chat/completions", post(echo))
+        .route("/v1/messages", post(echo));
+    let (endpoint, _server) = serve(router).await;
+    let mappings = models
+        .iter()
+        .enumerate()
+        .map(|(index, model)| (format!("public-{index}"), (*model).into()))
+        .collect();
+    add_account(
+        &state,
+        &endpoint,
+        "new-models",
+        models.iter().map(|model| (*model).into()).collect(),
+        mappings,
+        &["responses", "compact", "chat", "anthropic"],
+        0,
+    );
+    for (index, model) in models.iter().enumerate() {
+        let profile = profiles::find(&format!("aijailbreak-{model}-v1")).unwrap();
+        for protocol in ["responses", "compact", "chat", "anthropic"] {
+            let original = original_body(protocol, &format!("public-{index}"));
+            let (status, output) =
+                json_response(request(&state, protocol, original.clone()).await).await;
+            assert_eq!(status, StatusCode::OK, "{protocol} {model}: {output}");
+            assert_eq!(
+                output,
+                expected_body(protocol, original, model, Some(profile))
+            );
+        }
+    }
 }
 
 #[tokio::test]

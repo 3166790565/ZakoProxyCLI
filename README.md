@@ -82,6 +82,12 @@ Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。�
 
 旧版部署需先拉取本版本源码并执行一次上述 Compose 构建和启动命令，以安装更新器。使用自定义 Compose 项目名时，保持 `COMPOSE_PROJECT_NAME` 一致；不使用 Compose 或未配置更新器的本地开发环境只展示版本信息，不能在网页执行更新。更新代理镜像不会自行替换更新器或修改宿主机 Compose 文件；发布说明要求调整部署配置时仍需由管理员执行。
 
+### v0.11.0 GLM / Grok 轻量策略与账号调度
+
+新增六个需要主动勾选的 AI-Jailbreak API 轻量策略，覆盖 `glm-5.3`、`glm-5.3-flash`、`glm-5.3-air`、`grok-4.7`、`grok-4.6` 和 `grok-build`。原 GLM-5.3 / Grok-4.7 冷咖啡策略及已有分组选择保留，同一精确模型的不同策略互斥。目录现为 42 个策略、41 个唯一模型 ID。轻量版标注来源、正文大小与“未实测”状态，不将体积减少或结构分视作效果提升。
+
+仪表盘移除数据导出按钮及对应导出功能，调用日志页的 JSON 导出保留。账号冷却按当前请求的分组、协议和实际模型筛出的候选池处理：只有一个候选账号时不进入冷却，全部候选账号冷却时清除该池冷却后重新轮询；单次请求仍最多尝试 `最大重试数 + 1` 个不同账号，RPM 与并发限制不变。升级保留数据和已有策略选择，无需数据库迁移。
+
 ### v0.10.0 樱花布丁主题
 
 控制台界面整体改为二次元风格的“樱花布丁”主题：以樱花粉、暖蜂蜜黄和奶油白为主色，卡片、按钮、输入框和弹窗采用更大的圆角；侧边栏和顶栏改为浮动卡片，系统设置与调用日志改为卡片布局，图表使用柔和的渐变填充，登录页和空状态新增“杂鱼酱”小鱼插画。界面西文字体由 Inter 改为 Nunito（OFL-1.1，随前端本地打包），中文继续使用系统字体。本版本只修改前端外观，API、数据与部署方式不变，升级无需额外操作。
@@ -118,7 +124,7 @@ docker compose ps
 
 ## 配置中转
 
-1. **分组管理：** 创建分组，在“破甲策略”中通过 `profile_ids` 独立勾选专用策略。目录共有 36 个策略、37 个精确模型 ID（DeepSeek 4.1 Flash 的两个历史拼写共用原策略，`deepseek-flash` 作为独立 Hanshuang 策略），完整名单见下表。另有“开启破甲默认策略”开关 `default_strategy_enabled`，新建及旧版分组默认关闭。按账号映射后的实际模型匹配已选专用策略，命中时优先使用；未命中时，仅开关开启才使用默认策略。每次请求最多使用一种策略，不拼接专用与默认正文。分组不配置自定义模型列表或指令；账号可用模型、协议和分组资格仍独立检查，开关不会增加可调用模型。旧版未修改过的内置模板分组会自动识别。删除分组前需先解除账号和密钥引用。
+1. **分组管理：** 创建分组，在“破甲策略”中通过 `profile_ids` 独立勾选专用策略。目录共有 42 个策略、41 个唯一精确模型 ID，所有策略的 `models` 共含 43 项（GLM-5.3 和 Grok-4.7 各有两个可选版本，DeepSeek 4.1 Flash 的两个历史拼写共用原策略），完整名单见下表。同一模型只能选择一种策略：界面选择另一版本会取消重叠选择，API 拒绝冲突配置。另有“开启破甲默认策略”开关 `default_strategy_enabled`，新建及旧版分组默认关闭。按账号映射后的实际模型匹配已选专用策略，命中时优先使用；未命中时，仅开关开启才使用默认策略。每次请求最多使用一种策略，不拼接专用与默认正文。分组不配置自定义模型列表或指令；账号可用模型、协议和分组资格仍独立检查，开关不会增加可调用模型。旧版未修改过的内置模板分组会自动识别。删除分组前需先解除账号和密钥引用。
 2. **账号管理：** 输入上游端点及 API key，“支持协议”默认勾选 `responses` / `compact` / `chat` / `anthropic`，可按上游中转站支持情况取消，再拉取并勾选上游实际可用模型、选择所属分组。`chat` 对应 `/v1/chat/completions`，`anthropic` 对应 `/v1/messages`；选择 Anthropic 获取模型时也使用 Anthropic 鉴权。模型名称不限定协议：例如 Grok、Gemini、DeepSeek 或 GLM 可以走中转站提供的 OpenAI 兼容或 Anthropic 兼容接口。可通过 `model_mappings` 设置“请求模型 → 实际模型”，映射目标必须已勾选；映射仅执行一次，不递归串联，未配置映射的请求使用同名模型。端点可带或不带 `/v1`。RPM 和并发限制设为 `0` 表示不限制；编辑时密钥留空会保留原密钥。“模型映射”和“所属分组”之间可选填账号代理，支持 `socks5://host:port`、`socks5h://host:port` 和带用户名密码的链接（特殊字符需百分号编码）。右侧测试按钮通过该代理请求当前上游模型接口，显示耗时、HTTP 状态或脱敏错误；HTTP 401/403 表示代理已连通但上游鉴权失败。代理地址加密保存，编辑留空保留，点击“移除代理”并保存才会删除。保存后四协议、流式请求及模型获取均走该账号代理，代理失败不会自动改为该账号直连；重试使用下一个账号自己的代理。Docker 中 `127.0.0.1` 指容器自身，应填写容器可访问的代理地址。
 3. **密钥管理：** 为指定分组创建命名的客户端 API key，可在创建后及之后登录控制台时复制。修改所属分组无需更换 key；停用或删除后阻止新的请求。API 基础地址为当前站点来源加 `/v1`。
 4. **系统设置：** 设置安全入口、最大重试数、失败阈值、冷却时间、请求超时及统计保留天数。修改密码需验证原密码并再次确认新密码，成功后撤销所有会话。此处二次确认不是 TOTP 等独立第二认证因素。
@@ -135,15 +141,19 @@ docker compose ps
 | --- | --- |
 | GPT（保留） | `gpt-5.6-sol`、`gpt-6.1-sol`、`gpt-6-astra` |
 | Claude | `claude-fable-5`、`claude-fable-5-1`、`claude-haiku-4-5`、`claude-haiku-5-5`、`claude-opus-4-5`、`claude-opus-4-6`、`claude-opus-4-7`、`claude-opus-4-8`、`claude-opus-5`、`claude-opus-5-5`、`claude-sonnet-4-5`、`claude-sonnet-4-6`、`claude-sonnet-5`、`claude-sonnet-5-5` |
-| Grok | `grok-4.7` |
+| Grok | `grok-4.7`、`grok-4.6`、`grok-build` |
 | Gemini | `gemini-3-flash`、`gemini-3.1-flash-image`、`gemini-3.1-pro`、`gemini-3.1-pro-preview`、`gemini-3.6-flash`、`gemini-3.7-flash`、`gemini-3.8-flash` |
 | DeepSeek | `deepseek-v4-flash`、`deepseek-v4-flash-0731`、`deepseek-v4-pro`、`deepseek-v4-pro-0813`、`deepseek-v4.1-flash` / `deepseek-4.1-flash` / `deepseek-flash`（`deepseek-v4.1-flash` 与 `deepseek-4.1-flash` 共用原寒霜策略，`deepseek-flash` 为独立寒霜策略） |
-| GLM | `glm-5.3` |
+| GLM | `glm-5.3`、`glm-5.3-flash`、`glm-5.3-air` |
 | Kimi | `kimi-k3`、`kimi-k2.7`、`kimi-k2.7-code`、`kimi-k2.6` |
 
-专用策略按精确模型选择，不按系列通配匹配。寒霜策略沿用 `coldcoffee-deepseek-v4.1-flash-v1`，已有分组选择继续匹配 `deepseek-v4.1-flash` 与 `deepseek-4.1-flash`；新增独立 `hanshuang-deepseek-flash-v1` 策略匹配 `deepseek-flash`，正文相同。名单表示策略选择，并不承诺上游提供这些模型；以账号实际可用模型和协议为准。冷咖啡、寒霜和 Kimi 正文均为内联请求文本，代理不会安装本地 Skill、工具或客户端配置，也不会伪造工具执行结果。实际模型行为须在使用的中转站验证。
+专用策略按精确模型选择，不按系列通配匹配。寒霜策略沿用 `coldcoffee-deepseek-v4.1-flash-v1`，已有分组选择继续匹配 `deepseek-v4.1-flash` 与 `deepseek-4.1-flash`；新增独立 `hanshuang-deepseek-flash-v1` 策略匹配 `deepseek-flash`，正文相同。名单表示策略选择，并不承诺上游提供这些模型；以账号实际可用模型和协议为准。冷咖啡、寒霜、Kimi 和 AI-Jailbreak 正文均为内联请求文本，代理不会安装本地 Skill、工具或客户端配置，也不会伪造工具执行结果。实际模型行为须在使用的中转站验证。
 
-调度仅选择匹配当前分组、协议且映射后实际模型已勾选的可用账号，未勾选任何可用模型的账号不接收请求。**优先级数字越小越先尝试**，相同优先级按账号 ID 稳定排序。单请求最多尝试 `最大重试数 + 1` 个不同账号。每次尝试都从原始客户端请求重新应用当前账号的单跳映射，再按实际模型匹配分组策略；故障转移到其他账号时独立计算，不继承或叠加前一账号的策略。连接失败、HTTP 401、403、408、429 和 HTTP 5xx 可在响应开始前切换到下一账号；连续可重试失败达到阈值时进入冷却，冷却时间结束后重新参与调度。其余 4xx 原样返回，不触发重试。流式响应已开始后中断不会重放请求。RPM 窗口、并发及冷却状态只保存在当前进程，重启后重置；同一个数据卷只运行一个实例。
+AI-Jailbreak 六项轻量策略使用 `aijailbreak-<精确模型 ID>-v1`，GLM 与 Grok 的适配正文分别为 2,114 和 2,014 字节 UTF-8，字节数不等于 token 数。它们是基于上游技术交付、简洁输出、不确定性和上下文续接机制编写的英文 API 适配正文，按客户端语言回答；不是原始提示词的直接复制。现有 `coldcoffee-glm-5.3-v1` 与 `coldcoffee-grok-4.7-v1` 保持不变，已有分组不会自动切换。新增条目的可选 `metadata` 包含来源 URL、固定提交、`lightweight-api` 版本类型和 `unverified` 验证状态。本地测试确认路由、互斥和原请求保留，尚未进行真实模型效果评测。
+
+本次评估保留其他系列：DeepSeek 候选要求先输出重写请求并固定首轮结构，可能改变客户端的 JSON 或工具工作流；GPT、Claude、Gemini 和 Kimi 候选缺少现有精确型号的效果证据；通用候选也未证明优于现有默认策略。它们不在本版本中替换现有策略，评估范围记录于 [profiles/ai-jailbreak/SOURCE.json](profiles/ai-jailbreak/SOURCE.json)。
+
+调度仅选择匹配当前分组、协议且映射后实际模型已勾选的可用账号，未勾选任何可用模型的账号不接收请求。**优先级数字越小越先尝试**，相同优先级按账号 ID 稳定排序。单请求最多尝试 `最大重试数 + 1` 个不同账号。每次尝试都从原始客户端请求重新应用当前账号的单跳映射，再按实际模型匹配分组策略；故障转移到其他账号时独立计算，不继承或叠加前一账号的策略。连接失败、HTTP 401、403、408、429 和 HTTP 5xx 可在响应开始前切换到下一账号；只有多个匹配账号时才启用连续失败冷却，单账号池不会冻结。某请求对应的账号池全部进入冷却后，调度会同时清除该池冷却并重新轮询；若再次全部失败，会按相同规则循环。冷却时间到期的账号也会正常恢复。其余 4xx 原样返回，不触发重试。流式响应已开始后中断不会重放请求。RPM 窗口、并发及冷却状态只保存在当前进程，重启后重置；同一个数据卷只运行一个实例。
 
 安全入口将控制台从 `/` 移到 `/<入口>`，`/health` 和 `/v1/*` 不受影响。它是额外的入口隐藏措施，不代替登录认证。保存设置后请记录新的登录地址。
 
@@ -177,7 +187,7 @@ curl -N http://localhost:1990/v1/responses \
 ## 统计与存储
 
 - 仪表盘展示输入、输出、缓存及未命中 token、缓存命中率、RPM、TPM、总请求、成功率、平均耗时、每日图表、历史区间和 Cyber 标记次数。
-- Token 总量、Token 分布及相关缩写显示使用 `K`（千）、`M`（百万）、`B`（十亿）、`T`（万亿），缩写固定两位小数，例如 `90.48M`、`1.00B`；不足一千保持整数。仅更改显示，API 用量整数和导出原始数据不变。
+- Token 总量、Token 分布及相关缩写显示使用 `K`（千）、`M`（百万）、`B`（十亿）、`T`（万亿），缩写固定两位小数，例如 `90.48M`、`1.00B`；不足一千保持整数。仅更改显示，API 返回的用量仍为原始整数。
 - 缓存 token 已包含在输入 token 内，总 token 为输入加输出，不重复计数。用量来自上游 JSON 或完成后的 SSE 用量字段，缺失时计为零，不估算。
 - RPM / TPM 为最近 60 秒已结束并记录的请求；每日统计使用 UTC。总量和单密钥用量基于保留中的请求元数据，并非永久计费账本。默认保留 90 天，新请求写入时清理过期记录。
 - Cyber 计数表示响应中出现不区分大小写的 `cyber` 文本，每个响应最多计一次。它是文本启发式统计，不等同于特定弹窗、拒答或模型行为的检测结果。
@@ -219,7 +229,7 @@ cargo test --locked --all-targets --all-features
 
 ## 开源协议与第三方声明
 
-前端构建会自动收集锁定依赖的许可声明，包含 Inter 字体的 SIL Open Font License。生成的 `assets/third-party-licenses.txt` 由站点提供，并随镜像保存至 `/app/licenses/frontend-notices.txt`。第三方组件保留各自的许可条款。
+前端构建会自动收集锁定依赖的许可声明，包含 Nunito 字体的 SIL Open Font License。生成的 `assets/third-party-licenses.txt` 由站点提供，并随镜像保存至 `/app/licenses/frontend-notices.txt`。第三方组件保留各自的许可条款。
 
 本项目以 [MIT 协议](LICENSE) 开源。
 
@@ -247,3 +257,9 @@ Kimi 的四个逐模型策略参考并改编自 [YD-233/kimi-break](https://gith
 - **上游版权与协议：** Copyright (c) 2026 YD-233，MIT License；完整声明与原始 `README.md`、`SYSTEM.md` 保留于 [third_party/kimi-break](third_party/kimi-break)，容器分发 `/app/licenses/kimi-break.LICENSE`。
 - **API 适配范围：** 保留上游人格、行为策略、编码规范与用户风格正文；将 Kimi Code CLI 的模板变量、环境与项目章节改为本次 API 请求实际提供的上下文，不预设本地工具、路径、Skill 或插件。四个模型逐项选择，沿用现有 OpenAI / Anthropic 兼容协议注入链路。单次匹配增加 13,264 字节 UTF-8 指令。
 - **复现与边界：** 固定源文件和生成文本的 SHA-256 记录于 [profiles/kimi-break/SOURCE.json](profiles/kimi-break/SOURCE.json)。运行 `python scripts/import-kimi-break.py --check` 可完全离线核验，去掉 `--check` 可重新生成；也可传入该提交的干净上游 checkout。导入器只读取文本数据。模型 ID 为可选配置，不保证中转站提供这些模型；本地测试确认策略注入及原请求保留，实际模型响应效果取决于所用服务。
+
+GLM / Grok 的六个轻量候选参考 [Baimuking/AI-Jailbreak](https://github.com/Baimuking/AI-Jailbreak)，固定提交为 [`8c278b10f47f305546a52d7a0ce044d2c643dc71`](https://github.com/Baimuking/AI-Jailbreak/tree/8c278b10f47f305546a52d7a0ce044d2c643dc71)。
+
+- **上游版权与协议：** Copyright (c) 2026 Baimuking，MIT License。原始参考正文、许可和改编说明保留于 [third_party/ai-jailbreak](third_party/ai-jailbreak)，容器附带 `/app/licenses/ai-jailbreak.LICENSE` 与 `/app/licenses/ai-jailbreak.NOTICE.md`。
+- **API 适配范围：** 保留直接交付、完整产物、明确不确定性及上下文续接思路，改为实际请求上下文和工具能力；去掉固定本地身份、默认全部授权、指令优先级覆盖、无条件禁用措辞和跨请求记忆假设。未执行或安装上游 CLI、安装器或代理配置。
+- **来源与复现：** [profiles/ai-jailbreak/SOURCE.json](profiles/ai-jailbreak/SOURCE.json) 记录源文件与产物 SHA-256、字节数和评估结论。`python scripts/import-ai-jailbreak.py --check` 完全离线核验，去掉 `--check` 可重新生成。上游卡片和本站适配均为未实测状态，结构分及协议测试不代表模型效果或破甲成功率。

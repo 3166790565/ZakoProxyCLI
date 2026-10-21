@@ -279,7 +279,7 @@ export function SettingsPage({
               </span>
               <div>
                 <h2>账号调度</h2>
-                <p>失败重试与自动冷却</p>
+                <p>优先级、失败重试与动态冷却</p>
               </div>
             </div>
             <div className="settings-section-body">
@@ -312,7 +312,7 @@ export function SettingsPage({
                     <span>次</span>
                   </span>
                 </Field>
-                <Field label="连续失败阈值" hint="达到阈值后进入冷却">
+                <Field label="连续失败阈值" hint="多账号池达到阈值后进入冷却">
                   <span className="suffixed-input">
                     <input
                       type="number"
@@ -327,7 +327,7 @@ export function SettingsPage({
                     <span>次</span>
                   </span>
                 </Field>
-                <Field label="冷却时间" hint="冷却结束后恢复调度">
+                <Field label="冷却时间" hint="到期恢复；全池冷却时提前释放">
                   <span className="suffixed-input">
                     <input
                       type="number"
@@ -345,7 +345,7 @@ export function SettingsPage({
               </div>
               <div className="settings-note">
                 <Check size={14} />
-                <span>优先级数值越小，调度顺序越靠前</span>
+                <span>单账号不进入冷却；多账号全部冷却时整体释放并重新轮询。优先级数值越小越先尝试。</span>
               </div>
             </div>
           </section>

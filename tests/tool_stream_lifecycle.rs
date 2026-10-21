@@ -416,7 +416,7 @@ async fn normal_response_length_stop_does_not_cool_down_account() {
 }
 
 #[tokio::test]
-async fn real_failed_response_still_cools_down_and_is_not_reported_as_rate_limit() {
+async fn single_account_pool_never_cools_down_after_real_failures() {
     const SSE: &str = "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"failure\"}}}\n\n";
     let (endpoint, _server, captured) = sse_server(Protocol::Responses.path(), SSE, false).await;
     let (_dir, state) = fixture(&endpoint);
@@ -436,18 +436,17 @@ async fn real_failed_response_still_cools_down_and_is_not_reported_as_rate_limit
         &Protocol::Responses.body(true),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert!((1..=60).contains(&retry_seconds(&response)));
-    assert_error_code(&error_json(response).await);
-    assert_eq!(captured.lock().unwrap().len(), 2);
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(read(response).await.unwrap().as_ref(), SSE.as_bytes());
+    assert_eq!(captured.lock().unwrap().len(), 3);
     let runtime = state.runtime.lock().unwrap();
-    assert_eq!(runtime["upstream"].failures, 2);
-    assert!(runtime["upstream"].cooldown_until > store::now());
+    assert_eq!(runtime["upstream"].failures, 3);
+    assert_eq!(runtime["upstream"].cooldown_until, 0);
     assert_eq!(runtime["upstream"].active, 0);
 }
 
 #[tokio::test]
-async fn cooldown_reports_503_and_actual_remaining_retry_delay() {
+async fn single_account_pool_bypasses_existing_cooldown_and_retries() {
     let (_dir, state) = fixture("http://127.0.0.1:1");
     let until = store::now() + 45;
     state
@@ -458,13 +457,8 @@ async fn cooldown_reports_503_and_actual_remaining_retry_delay() {
         .or_default()
         .cooldown_until = until;
     let response = request(&state, Protocol::Chat.path(), &Protocol::Chat.body(true)).await;
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let remaining = retry_seconds(&response);
-    assert!(
-        remaining >= until - store::now() && remaining <= 45,
-        "retry delay {remaining} does not match cooldown until {until}"
-    );
-    assert_error_code(&error_json(response).await);
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    assert_eq!(state.runtime.lock().unwrap()["upstream"].cooldown_until, 0);
 }
 
 #[tokio::test]

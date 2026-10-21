@@ -533,6 +533,16 @@ fn save_group_impl(
     if g.profile_ids.iter().any(|id| profiles::find(id).is_none()) {
         return Err(bad("Unknown instruction profile"));
     }
+    let mut models = std::collections::HashSet::new();
+    for profile in g.profile_ids.iter().filter_map(|id| profiles::find(id)) {
+        for model in &profile.models {
+            if !models.insert(model) {
+                return Err(bad(&format!(
+                    "Only one instruction profile may target model {model}"
+                )));
+            }
+        }
+    }
     g.id = path.clone().unwrap_or_else(id);
     g.name = g.name.trim().into();
     s.store.update(|c| {

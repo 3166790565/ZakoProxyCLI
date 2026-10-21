@@ -27,6 +27,7 @@ jobs:
           python3 scripts/check-release-version.py
           python3 scripts/import-kimi-break.py --check
           python3 scripts/import-hanshuang.py --check
+          python3 scripts/import-ai-jailbreak.py --check
           python3 -m unittest discover -s scripts -p 'test_*.py'
       - uses: dtolnay/rust-toolchain@1.99.0
         with:
