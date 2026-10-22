@@ -1,58 +1,126 @@
+<div align="center">
+
+<img src="web/public/favicon.svg" width="88" height="88" alt="ZakoAI Proxy 标志" />
+
 # ZakoAI Proxy
+
+**多协议接入 · 多账号调度 · 一个清晰好用的管理控制台**
+
+基于 Rust 的自托管 AI API 中转，为你的模型、账号和客户端密钥提供统一管理入口。
+
+[![Release](https://img.shields.io/github/v/release/mizaawa/ZakoProxyCLI?style=flat-square&color=e991ac)](https://github.com/mizaawa/ZakoProxyCLI/releases)
+[![CI](https://github.com/mizaawa/ZakoProxyCLI/actions/workflows/ci.yml/badge.svg)](https://github.com/mizaawa/ZakoProxyCLI/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/Rust-1.99-dea584?style=flat-square&logo=rust)](Cargo.toml)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?style=flat-square&logo=docker&logoColor=white)](compose.yaml)
+[![License](https://img.shields.io/badge/License-MIT-8bbf9f?style=flat-square)](LICENSE)
 
 简体中文 · [English](README.en.md) · [安全说明](SECURITY.md) · [API 契约](API_CONTRACT.md)
 
-基于 Rust 的自托管 Responses / Chat Completions / Anthropic Messages API 中转，提供适配 PC 和移动端的管理控制台、SQLite 持久化和 Docker Compose 部署。侧边栏包含仪表盘、分组管理、账号管理、密钥管理、调用日志和系统设置。
+**[快速部署](#quick-start) · [配置中转](#configuration) · [客户端接入](#client-api) · [模型与策略](#profiles)**
 
-## ⚠️ 免责声明 · Disclaimer
-
-### 简体中文
-
-> [!WARNING]
-> **严禁将本项目用于任何违法违纪活动。**
-
-本项目仅供合法、合规的学习、研究和在你本人有权操作的环境里使用。包括但不限于：未经授权的入侵、攻击、渗透、窃取数据；诈骗、洗钱、传播恶意程序；生成或传播违法有害内容；侵犯他人隐私、知识产权和其他合法权益；违反所在地法律法规或第三方平台、模型服务的使用条款。
-
-使用者须自行遵守所在国家和地区的法律法规，以及相关软件和服务的使用条款。使用本项目产生的一切行为和后果，由使用者自行承担，与项目作者及贡献者无关。如果你不同意以上内容，请不要下载、安装或使用本项目。
-
-### English
-
-> [!WARNING]
-> **This project must NOT be used for any illegal or unlawful activity.**
-
-It is provided only for lawful and compliant learning, research, and use in environments you are authorized to operate. Prohibited uses include, without limitation: unauthorized intrusion, attacks, penetration, or data theft; fraud, money laundering, or distributing malware; generating or spreading illegal or harmful content; infringing others' privacy, intellectual property, or other legal rights; and violating applicable laws or the terms of use of third-party platforms and model services.
-
-You are solely responsible for complying with the laws and regulations of your jurisdiction and with the terms of the software and services you use. All actions and consequences arising from the use of this project are borne entirely by the user, and the authors and contributors accept no liability. If you do not agree, do not download, install, or use this project.
+</div>
 
 ---
 
-# AI中转站推荐 -- 杂鱼API
+## 🐟 推荐中转 · 杂鱼 API
 
-[点我跳转](https://www.zayuapi.com/)
+> [!TIP]
+> ### 让好模型，更好接入。
+> **GPT · Claude · Gemini · Grok · 多款国产模型**
+>
+> 从日常对话到开发调用，为你的 AI 工作流找到合适的模型服务。
+> 搭配 **ZakoAI Proxy**，统一管理上游账号、分组与客户端密钥。
+>
+> ### [🚀 立即访问杂鱼 API →](https://www.zayuapi.com/)
+> **[📖 新手部署教程](https://www.mizaawa.com/index.php/archives/95/)** · **[⚡ 开始部署 ZakoAI Proxy](#quick-start)**
 
-*稳定不掺水，已注册活跃用户高达 3000+，自有私有原创反代协议号池，支持 GPT、Claude、Gemini、Grok 外加大部分国模，价格始终处于国内第一低价梯队。*
+| 🤖 丰富模型 | 🔗 服务特色 | 💎 价格定位 |
+| :--- | :--- | :--- |
+| GPT、Claude、Gemini、Grok 与多款国产模型 | 自有私有原创反代协议号池 | 主打高性价比，按需选择模型服务 |
 
-## 小白向教程
-博客文档：https://www.mizaawa.com/index.php/archives/95/
+*以上沿用服务方介绍。模型供应、可用协议、价格与使用规则以杂鱼 API 官网为准。*
 
-## Docker Compose 部署
+---
 
-需要 Docker Engine / Docker Desktop 和 Docker Compose v2：
+<a id="overview"></a>
+
+## 为什么选择 ZakoAI Proxy
+
+把上游接入、访问控制与运行状态放在同一个控制台，既能在桌面管理，也能在手机上查看。
+
+| 能力 | 你可以做什么 |
+| :--- | :--- |
+| **四类请求协议** | 接入 Responses、Responses Compact、Chat Completions 与 Anthropic Messages，保留工具调用和 SSE 流式响应 |
+| **账号与模型管理** | 配置多个上游账号、单跳模型映射、所属分组，以及每个账号独立的 SOCKS5 代理 |
+| **分组与客户端密钥** | 按分组组织访问范围，创建、复制、停用或删除客户端 API key |
+| **调度与故障恢复** | 按优先级选择账号，设置重试、RPM、并发和失败冷却，处理匹配账号池的恢复 |
+| **统计与调用日志** | 查看 Token、缓存、RPM / TPM、成功率和耗时；分页查看调用记录并导出日志 JSON |
+| **自托管与运维** | SQLite 持久化、Docker Compose 部署、控制台版本检查与源码更新 |
+| **樱花布丁控制台** | 樱花粉、蜂蜜黄与奶油白主题，配合圆角卡片、图表与「杂鱼酱」插画 |
+
+> [!NOTE]
+> 客户端与上游账号使用同一种请求协议。代理不进行 API 协议转换；模型能否调用，以账号实际勾选的模型和支持协议为准。
+
+**阅读导航：** [部署](#quick-start) · [配置](#configuration) · [API](#client-api) · [策略](#profiles) · [运维](#operations) · [开发](#development) · [使用须知与致谢](#notices)
+
+<a id="quick-start"></a>
+
+## 快速开始
+
+### 1. 准备环境
+
+安装 **Docker Engine / Docker Desktop** 与 **Docker Compose v2**，然后获取源码：
 
 ```sh
 git clone https://github.com/mizaawa/ZakoProxyCLI.git
 cd ZakoProxyCLI
+cp .env.example .env
+```
+
+`.env` 必须先创建：Compose 会把它挂载到容器，控制台也会将 Turnstile 配置写入该文件。升级现有部署时保留已有 `.env`，无需重新复制模板。
+
+<details>
+<summary>Linux：允许控制台保存 Turnstile 配置</summary>
+
+将 `.env` 中的 `ZAKO_GID` 设置为该文件所属组的数字 GID，并赋予该组写入权限。可先查看：
+
+```sh
+ls -ln .env
+chmod 660 .env
+```
+
+例如，文件所属组为 `1000` 时，使用 `ZAKO_GID=1000`。调整附加组后重新创建容器，使配置生效。
+
+</details>
+
+### 2. 构建并启动
+
+```sh
 docker compose pull
 docker compose build --pull
 docker compose up -d --no-build
 docker compose ps
 ```
 
-访问 **http://localhost:1990**。全新数据卷首次进入会创建管理员账号，密码至少 12 个字符；之后使用同一账密登录。项目没有默认管理员账号或密码，请先完成初始化再对外开放服务。
+发布镜像为 `ghcr.io/mizaawa/zakoai-proxy-cli:latest`。上述流程先拉取镜像，再从当前源码构建应用与更新器；`build --pull` 同时刷新基础镜像。默认分支 CI 成功后会发布 `latest` 及对应提交 SHA 标签。
 
-`pull` 下载已发布镜像；`build --pull` 更新 Node、Rust、Debian 基础镜像并从当前源码重新编译项目；`up -d` 启动服务。镜像名称为 `ghcr.io/mizaawa/zakoai-proxy-cli:latest`，默认分支 CI 成功后会发布该镜像及对应提交 SHA 标签。
+### 3. 初始化控制台
 
-Compose 默认仅将宿主机 **127.0.0.1:1990** 映射到容器。需要对外开放端口时设置 `ZAKO_BIND_IP=0.0.0.0`，`ZAKO_PORT` 可修改宿主机端口。可在不提交 Git 的 `.env` 中配置：
+打开 **[http://localhost:1990](http://localhost:1990)**，创建管理员账号，密码至少 **12 个字符**。
+
+项目没有默认管理员账号或密码。请先完成初始化，再对外开放服务。初始化完成后，按「分组 → 账号 → 密钥」的顺序配置即可开始接入。
+
+### 4. 验证服务
+
+```sh
+curl --fail http://localhost:1990/health
+docker compose logs --tail=100 -f
+```
+
+<details>
+<summary>端口、公网 HTTPS 与流式代理设置</summary>
+
+Compose 默认只监听宿主机 `127.0.0.1:1990`。在项目根目录的 `.env` 中追加或调整：
 
 ```dotenv
 ZAKO_BIND_IP=127.0.0.1
@@ -60,69 +128,51 @@ ZAKO_PORT=1990
 TRUST_PROXY=0
 ```
 
-公网部署请通过可信反向代理提供 HTTPS，后端端口保持私有。仅在此代理之后设置 `TRUST_PROXY=1`，代理须保留原始 `Host` 并传入 `X-Forwarded-Proto: https`，从而启用会话 Cookie 的 `Secure` 属性。SSE 代理需关闭响应缓冲，读取超时应大于系统设置中的请求超时。
+需要对外开放端口时，将 `ZAKO_BIND_IP` 改为 `0.0.0.0`；`ZAKO_PORT` 控制宿主机端口。
 
-```sh
-docker compose logs --tail=100 -f
-curl --fail http://localhost:1990/health
-docker compose down
-```
+公网部署应通过可信反向代理提供 HTTPS，并让后端端口保持私有。仅在该代理之后设置 `TRUST_PROXY=1`；代理须保留原始 `Host`，并传入 `X-Forwarded-Proto: https`，以启用会话 Cookie 的 `Secure` 属性。
 
-`down` 保留数据卷，`down -v` 会删除管理员、配置、密钥和统计数据。
+SSE 流式代理需要关闭响应缓冲，读取超时应大于系统设置中的请求超时。
 
-### 在控制台更新
+</details>
 
-v0.5.0 起，登录后自动检查新版本，并在页面可见时每 15 分钟复查；后台标签暂停检查，退出登录停止检查。发现更高的正式版本时，页面标题旁显示带圆点的黄色“有新版本”标签，点击进入系统设置并定位更新区域。手动检查与顶部提示同步。查询在服务端合并并发请求，成功缓存 5 分钟，失败退避 1 分钟；未配置更新器也可检查和提示，执行构建更新仍需配置更新器。
+> [!WARNING]
+> `docker compose down` 保留数据卷；`docker compose down -v` 会删除管理员、配置、密钥和统计数据。备份时务必保留完整 `/data`，尤其是 `master.key`。
 
-v0.3.0 起可在 **系统设置 → GitHub 源码更新** 中检查 GitHub 最新正式 Release。选择更新后需再次输入当前管理员密码；更新器从官方仓库检出对应标签，在后台从源码构建镜像，并显示构建、部署和健康检查日志。构建期间旧版本继续服务，切换版本时会短暂中断连接；页面恢复后可继续查看结果。
-
-Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。主程序通过内部 `UPDATER_URL=http://updater:9000/` 及只读 `/control/token` 访问它。Docker socket 仅挂载给更新器，不挂载给公开的代理服务。更新器持有近似宿主机 root 的 Docker 控制能力，请仅在受控服务器上部署，不要对外暴露内部接口或共享令牌。
-
-源码构建成功后，更新器先停止代理并备份完整数据，再启动新镜像；部署或健康检查失败时恢复旧版本及同一次数据备份。更新状态和备份保留在 `update-state` 数据卷中，不能代替异地备份。账号、API key、分组、统计和 `master.key` 随数据卷保留。更新只接受官方仓库的正式版本标签，不支持输入任意地址或执行命令。
-
-旧版部署需先拉取本版本源码并执行一次上述 Compose 构建和启动命令，以安装更新器。使用自定义 Compose 项目名时，保持 `COMPOSE_PROJECT_NAME` 一致；不使用 Compose 或未配置更新器的本地开发环境只展示版本信息，不能在网页执行更新。更新代理镜像不会自行替换更新器或修改宿主机 Compose 文件；发布说明要求调整部署配置时仍需由管理员执行。
-
-### v0.11.0 GLM / Grok 轻量策略与账号调度
-
-新增六个需要主动勾选的 AI-Jailbreak API 轻量策略，覆盖 `glm-5.3`、`glm-5.3-flash`、`glm-5.3-air`、`grok-4.7`、`grok-4.6` 和 `grok-build`。原 GLM-5.3 / Grok-4.7 冷咖啡策略及已有分组选择保留，同一精确模型的不同策略互斥。目录现为 42 个策略、41 个唯一模型 ID。轻量版标注来源、正文大小与“未实测”状态，不将体积减少或结构分视作效果提升。
-
-仪表盘移除数据导出按钮及对应导出功能，调用日志页的 JSON 导出保留。账号冷却按当前请求的分组、协议和实际模型筛出的候选池处理：只有一个候选账号时不进入冷却，全部候选账号冷却时清除该池冷却后重新轮询；单次请求仍最多尝试 `最大重试数 + 1` 个不同账号，RPM 与并发限制不变。升级保留数据和已有策略选择，无需数据库迁移。
-
-### v0.10.0 樱花布丁主题
-
-控制台界面整体改为二次元风格的“樱花布丁”主题：以樱花粉、暖蜂蜜黄和奶油白为主色，卡片、按钮、输入框和弹窗采用更大的圆角；侧边栏和顶栏改为浮动卡片，系统设置与调用日志改为卡片布局，图表使用柔和的渐变填充，登录页和空状态新增“杂鱼酱”小鱼插画。界面西文字体由 Inter 改为 Nunito（OFL-1.1，随前端本地打包），中文继续使用系统字体。本版本只修改前端外观，API、数据与部署方式不变，升级无需额外操作。
-
-### v0.9.0 Turnstile 安全校验与日志统计改进
-
-系统设置支持配置 Cloudflare Turnstile 站点密钥和密钥，登录时启用人机校验；密钥加密保存且不会通过 API 返回。调用日志分页器支持键盘操作和移动端触控，仪表盘对大数量统计使用紧凑显示；新增超过千条 Cyber 事件的统计覆盖测试。
-
-### v0.9.3 Turnstile `.env` 配置与 Release 同步
-
-Turnstile 站点密钥和密钥统一保存在项目根目录 `.env`，系统设置保存时会自动更新该文件；旧数据库中的 Turnstile 配置会被清理。系统设置提供后台连接测试和右上角 Toast 提示。GitHub 源码更新以最新正式 Release 为准；当本地版本高于 Release 时，更新按钮会同步到该正式版本。
-
-### v0.8.0 DeepSeek API 兼容策略
-
-为全部五个 DeepSeek 精确模型档案组合一层共享的 API 适配提示，吸收 dsh-purge 的请求期提示组装与上下文连续性思路；策略仍按映射后的实际模型选择，并沿用现有 Responses / Compact、Chat Completions 和 Anthropic 注入链路。原 profile ID 与旧版配置识别规则保留，模型目录数量不变。适配层以当前请求实际携带的消息、工具和结果为准，不假设 Harness 本地文件、hook、审批、沙箱、跨请求记忆或权限，也不声称修改上游模型策略。来源版本、改编范围和 MIT 声明见 [profiles/dsh-purge/SOURCE.json](profiles/dsh-purge/SOURCE.json) 与 [third_party/dsh-purge/NOTICE.md](third_party/dsh-purge/NOTICE.md)。
-
-### v0.7.0 调用日志与请求链路修复
-
-密钥管理下新增独立调用日志，默认保留最近 7 天，每页 20 条，支持分页跳页、JSON 导出、清空日志、状态码和结构化 JSON/SSE 错误详情，并记录首字耗时及缓存读写 Token；仪表盘不再重复展示调用日志。Responses / Chat 流式工具请求现在在确认终止事件后及时释放并发槽；正常的长度限制或内容过滤不会误判为账号故障。账号冷却返回带真实剩余时间的 503，RPM 和并发本地限制保留 429，并提供机器可读错误原因。真实上游的 HTTP 状态、脱敏错误正文及 Retry-After 继续透传。
-
-### v0.6.0 仓库改名后的首次升级
-
-官方仓库已改名为 ZakoProxyCLI。v0.5.0 及更早版本的更新器严格匹配旧 Release URL，因此仓库改名后网页检查或更新可能失败。请在原部署目录执行一次以下操作，同时替换 proxy 和 updater；保持原目录、Compose 项目名和数据卷不变。若本地修改导致拉取失败，请先处理冲突。
-
-```sh
-git remote set-url origin https://github.com/mizaawa/ZakoProxyCLI.git
-git pull --ff-only origin main
-docker compose build --pull
-docker compose up -d --no-build
-docker compose ps
-```
-
-镜像仍发布至 ghcr.io/mizaawa/zakoai-proxy-cli，保持现有部署兼容。v0.6.0 识别新旧官方 Release URL；本次首次迁移不能依赖旧更新器自动完成。
+<a id="configuration"></a>
 
 ## 配置中转
+
+### 第一步：创建分组
+
+在 **分组管理** 中建立访问分组，按需勾选专用策略。策略按账号映射后的实际模型精确匹配；同一模型只能选择一种策略。
+
+「开启破甲默认策略」默认关闭。开启后，未命中已选专用策略的请求才使用默认策略；每次请求最多注入一种正文。策略选择不会增加账号可调用的模型。
+
+### 第二步：添加上游账号
+
+在 **账号管理** 中填写上游端点和 API key，选择支持协议，拉取并勾选实际可用模型，再指定所属分组。
+
+| 选项 | 配置说明 |
+| :--- | :--- |
+| **上游端点** | 可带或不带 `/v1`，按服务商提供的地址填写 |
+| **支持协议** | 默认勾选 `responses` / `compact` / `chat` / `anthropic`，按上游实际能力调整 |
+| **模型映射** | 将客户端请求名映射到实际模型，目标模型必须已勾选；映射只执行一次 |
+| **RPM / 并发** | 设为 `0` 表示不限制 |
+| **账号代理** | 可选 SOCKS5 / SOCKS5h，四协议、流式请求和模型获取均沿用该账号代理 |
+
+编辑账号时，API key 留空会保留原密钥。配置代理后，连接失败不会自动改为该账号直连。
+
+### 第三步：签发客户端密钥
+
+在 **密钥管理** 中为指定分组创建命名的 API key。之后登录控制台仍可复制；修改所属分组无需更换 key，停用或删除会阻止新的请求。
+
+### 第四步：调整系统设置
+
+按需设置安全入口、重试次数、失败阈值、冷却时间、请求超时、统计保留天数和 Turnstile 校验。安全入口将控制台移动到 `/<入口>`，`/health` 与 `/v1/*` 保持不变；保存后请记录新的登录地址。
+
+<details>
+<summary>完整配置说明：策略开关、模型别名、代理测试与密码管理</summary>
 
 1. **分组管理：** 创建分组，在“破甲策略”中通过 `profile_ids` 独立勾选专用策略。目录共有 42 个策略、41 个唯一精确模型 ID，所有策略的 `models` 共含 43 项（GLM-5.3 和 Grok-4.7 各有两个可选版本，DeepSeek 4.1 Flash 的两个历史拼写共用原策略），完整名单见下表。同一模型只能选择一种策略：界面选择另一版本会取消重叠选择，API 拒绝冲突配置。另有“开启破甲默认策略”开关 `default_strategy_enabled`，新建及旧版分组默认关闭。按账号映射后的实际模型匹配已选专用策略，命中时优先使用；未命中时，仅开关开启才使用默认策略。每次请求最多使用一种策略，不拼接专用与默认正文。分组不配置自定义模型列表或指令；账号可用模型、协议和分组资格仍独立检查，开关不会增加可调用模型。旧版未修改过的内置模板分组会自动识别。删除分组前需先解除账号和密钥引用。
 2. **账号管理：** 输入上游端点及 API key，“支持协议”默认勾选 `responses` / `compact` / `chat` / `anthropic`，可按上游中转站支持情况取消，再拉取并勾选上游实际可用模型、选择所属分组。`chat` 对应 `/v1/chat/completions`，`anthropic` 对应 `/v1/messages`；选择 Anthropic 获取模型时也使用 Anthropic 鉴权。模型名称不限定协议：例如 Grok、Gemini、DeepSeek 或 GLM 可以走中转站提供的 OpenAI 兼容或 Anthropic 兼容接口。可通过 `model_mappings` 设置“请求模型 → 实际模型”，映射目标必须已勾选；映射仅执行一次，不递归串联，未配置映射的请求使用同名模型。端点可带或不带 `/v1`。RPM 和并发限制设为 `0` 表示不限制；编辑时密钥留空会保留原密钥。“模型映射”和“所属分组”之间可选填账号代理，支持 `socks5://host:port`、`socks5h://host:port` 和带用户名密码的链接（特殊字符需百分号编码）。右侧测试按钮通过该代理请求当前上游模型接口，显示耗时、HTTP 状态或脱敏错误；HTTP 401/403 表示代理已连通但上游鉴权失败。代理地址加密保存，编辑留空保留，点击“移除代理”并保存才会删除。保存后四协议、流式请求及模型获取均走该账号代理，代理失败不会自动改为该账号直连；重试使用下一个账号自己的代理。Docker 中 `127.0.0.1` 指容器自身，应填写容器可访问的代理地址。
@@ -131,33 +181,57 @@ docker compose ps
 
 例如，账号配置片段 `{"models":["gpt-6-astra"],"model_mappings":{"chat-main":"gpt-6-astra"}}` 允许客户端请求 `chat-main`，向上游发送的 `model` 为 `gpt-6-astra`；分组勾选 `gpt-6-astra` 策略后，注入该模型的策略，而不是按别名匹配。未设置映射的 `gpt-6-astra` 请求仍使用同名实际模型。所有支持协议使用相同的模型映射与策略匹配规则。
 
-### 内置策略模型
+</details>
 
-默认策略从现有 `gpt-6-astra` 提示词的任务执行与连续任务机制改编为多模型 API 文本，见 [profiles/default.md](profiles/default.md) 和 [profiles/default.SOURCE.json](profiles/default.SOURCE.json)。正文为 3,844 字节 UTF-8，移除固定模型身份、本机工具环境和强制四文件交付等假设，保留客户端上下文和真实可用工具。开启后，未选专用策略的模型及目录外模型均可使用默认策略，前提仍是账号已勾选该实际模型。界面提示：“开启后，未勾选模型将采取默认提示词注入尝试进行破甲，如造成无法正常使用现象请关闭此选项”。分组 API 的 `PUT` 省略开关字段保留原值，显式 `false` 关闭；`null` 或非布尔值会被拒绝。
+<a id="client-api"></a>
 
-目前 27 个策略继续使用冷咖啡正文，保留上游席位正文、工作链和完整路由技能，单次匹配注入约 64–66 KB 的 UTF-8 文本，会占用上下文并增加输入 token。v0.6.0 将 DeepSeek 4.1 Flash 的一个策略替换为寒霜改编正文，其余 DeepSeek 策略不变。冷咖啡历史来源、逐文件哈希及适配范围记录于 [profiles/coldcoffee/SOURCE.json](profiles/coldcoffee/SOURCE.json)；可用 `python scripts/import-coldcoffee.py UPSTREAM_CHECKOUT` 从指定版本的干净上游副本重新生成，脚本只读取数据，不执行安装器或 Skill。
+## 客户端接入
 
-| 模型系列 | 精确匹配的实际模型 ID |
-| --- | --- |
-| GPT（保留） | `gpt-5.6-sol`、`gpt-6.1-sol`、`gpt-6-astra` |
-| Claude | `claude-fable-5`、`claude-fable-5-1`、`claude-haiku-4-5`、`claude-haiku-5-5`、`claude-opus-4-5`、`claude-opus-4-6`、`claude-opus-4-7`、`claude-opus-4-8`、`claude-opus-5`、`claude-opus-5-5`、`claude-sonnet-4-5`、`claude-sonnet-4-6`、`claude-sonnet-5`、`claude-sonnet-5-5` |
-| Grok | `grok-4.7`、`grok-4.6`、`grok-build` |
-| Gemini | `gemini-3-flash`、`gemini-3.1-flash-image`、`gemini-3.1-pro`、`gemini-3.1-pro-preview`、`gemini-3.6-flash`、`gemini-3.7-flash`、`gemini-3.8-flash` |
-| DeepSeek | `deepseek-v4-flash`、`deepseek-v4-flash-0731`、`deepseek-v4-pro`、`deepseek-v4-pro-0813`、`deepseek-v4.1-flash` / `deepseek-4.1-flash` / `deepseek-flash`（`deepseek-v4.1-flash` 与 `deepseek-4.1-flash` 共用原寒霜策略，`deepseek-flash` 为独立寒霜策略） |
-| GLM | `glm-5.3`、`glm-5.3-flash`、`glm-5.3-air` |
-| Kimi | `kimi-k3`、`kimi-k2.7`、`kimi-k2.7-code`、`kimi-k2.6` |
+使用控制台生成的**中转密钥**鉴权，可通过 `Authorization: Bearer` 或 `x-api-key` 传入。
 
-专用策略按精确模型选择，不按系列通配匹配。寒霜策略沿用 `coldcoffee-deepseek-v4.1-flash-v1`，已有分组选择继续匹配 `deepseek-v4.1-flash` 与 `deepseek-4.1-flash`；新增独立 `hanshuang-deepseek-flash-v1` 策略匹配 `deepseek-flash`，正文相同。名单表示策略选择，并不承诺上游提供这些模型；以账号实际可用模型和协议为准。冷咖啡、寒霜、Kimi 和 AI-Jailbreak 正文均为内联请求文本，代理不会安装本地 Skill、工具或客户端配置，也不会伪造工具执行结果。实际模型行为须在使用的中转站验证。
+| 接口 | 路径 | 用途 |
+| :--- | :--- | :--- |
+| 模型列表 | `GET /v1/models` | 返回当前分组可用的实际模型和有效请求别名 |
+| Responses | `POST /v1/responses` | Responses 请求与 SSE 流式输出 |
+| Compact | `POST /v1/responses/compact` | 上下文压缩，需上游支持 |
+| Chat Completions | `POST /v1/chat/completions` | OpenAI 兼容消息、工具调用与 SSE |
+| Anthropic Messages | `POST /v1/messages` | Anthropic 兼容消息、工具调用与 SSE |
 
-AI-Jailbreak 六项轻量策略使用 `aijailbreak-<精确模型 ID>-v1`，GLM 与 Grok 的适配正文分别为 2,114 和 2,014 字节 UTF-8，字节数不等于 token 数。它们是基于上游技术交付、简洁输出、不确定性和上下文续接机制编写的英文 API 适配正文，按客户端语言回答；不是原始提示词的直接复制。现有 `coldcoffee-glm-5.3-v1` 与 `coldcoffee-grok-4.7-v1` 保持不变，已有分组不会自动切换。新增条目的可选 `metadata` 包含来源 URL、固定提交、`lightweight-api` 版本类型和 `unverified` 验证状态。本地测试确认路由、互斥和原请求保留，尚未进行真实模型效果评测。
+**Chat Completions 客户端**通常使用 `http://localhost:1990/v1` 作为基础地址；**Anthropic 客户端**使用 `http://localhost:1990` 作为服务地址，并选择启用了对应协议的账号。
 
-本次评估保留其他系列：DeepSeek 候选要求先输出重写请求并固定首轮结构，可能改变客户端的 JSON 或工具工作流；GPT、Claude、Gemini 和 Kimi 候选缺少现有精确型号的效果证据；通用候选也未证明优于现有默认策略。它们不在本版本中替换现有策略，评估范围记录于 [profiles/ai-jailbreak/SOURCE.json](profiles/ai-jailbreak/SOURCE.json)。
+### 一个请求开始使用
 
-调度仅选择匹配当前分组、协议且映射后实际模型已勾选的可用账号，未勾选任何可用模型的账号不接收请求。**优先级数字越小越先尝试**，相同优先级按账号 ID 稳定排序。单请求最多尝试 `最大重试数 + 1` 个不同账号。每次尝试都从原始客户端请求重新应用当前账号的单跳映射，再按实际模型匹配分组策略；故障转移到其他账号时独立计算，不继承或叠加前一账号的策略。连接失败、HTTP 401、403、408、429 和 HTTP 5xx 可在响应开始前切换到下一账号；只有多个匹配账号时才启用连续失败冷却，单账号池不会冻结。某请求对应的账号池全部进入冷却后，调度会同时清除该池冷却并重新轮询；若再次全部失败，会按相同规则循环。冷却时间到期的账号也会正常恢复。其余 4xx 原样返回，不触发重试。流式响应已开始后中断不会重放请求。RPM 窗口、并发及冷却状态只保存在当前进程，重启后重置；同一个数据卷只运行一个实例。
+```sh
+export ZAKO_API_KEY='YOUR_GENERATED_PROXY_KEY'
 
-安全入口将控制台从 `/` 移到 `/<入口>`，`/health` 和 `/v1/*` 不受影响。它是额外的入口隐藏措施，不代替登录认证。保存设置后请记录新的登录地址。
+curl http://localhost:1990/v1/responses \
+  -H "Authorization: Bearer $ZAKO_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"YOUR_REQUEST_MODEL_ID","input":"Hello"}'
+```
 
-## 客户端 API
+将 `YOUR_REQUEST_MODEL_ID` 替换为账号已勾选的实际模型名，或配置好的请求别名。流式调用加入 `"stream":true` 并使用 `curl -N`：
+
+```sh
+curl -N http://localhost:1990/v1/responses \
+  -H "Authorization: Bearer $ZAKO_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"YOUR_REQUEST_MODEL_ID","input":"Hello","stream":true}'
+```
+
+### 常见错误速查
+
+| 状态 / 错误码 | 含义 |
+| :--- | :--- |
+| `429 / rate_limit_exceeded` | 本地账号 RPM 超限 |
+| `429 / concurrency_limit_exceeded` | 本地账号并发超限 |
+| `503 / upstream_cooldown` | 账号故障冷却，`Retry-After` 提供剩余时间 |
+| 上游 HTTP 错误 | 保留真实状态码、脱敏正文及 `Retry-After` |
+
+本地调度错误包含 `x-zako-error-source: local` 和请求 ID；上游错误标记为 `upstream`。完整字段约定见 [API_CONTRACT.md](API_CONTRACT.md)。
+
+<details>
+<summary>协议细节：策略注入、工具续接、流结束与错误透传</summary>
 
 提供 `GET /v1/models`、`POST /v1/responses`、`POST /v1/responses/compact`、`POST /v1/chat/completions` 和 `POST /v1/messages`。`/v1/models` 包含当前分组账号已勾选的实际模型及有效映射的请求模型名。鉴权使用控制台生成的中转密钥，通过 `Authorization: Bearer` 或 `x-api-key` 传入。客户端与账号使用同一种请求协议，代理不转换 API 协议或补充 Google 等厂商的原生接口。
 
@@ -184,7 +258,87 @@ curl -N http://localhost:1990/v1/responses \
 
 排查 429：本地 RPM / 并发超限返回 `429`，错误 `code` 分别为 `rate_limit_exceeded` / `concurrency_limit_exceeded`；账号故障冷却返回 `503` 和 `upstream_cooldown`，`Retry-After` 为剩余冷却秒数（RPM 为当前分钟剩余秒数，并发为建议 1 秒）。这些本地调度错误含 `x-zako-error-source: local` 与请求 ID。真实上游 HTTP 错误标为 `upstream`，保留状态、脱敏正文及 `Retry-After`；不会通过更换状态码掩盖上游限流。
 
-## 统计与存储
+</details>
+
+<a id="profiles"></a>
+
+## 模型与策略
+
+当前目录包含 **42 个策略、41 个唯一模型 ID**。专用策略按**映射后的实际模型 ID**精确匹配；GLM-5.3 与 Grok-4.7 各有两个可选版本，同一模型的策略互斥。
+
+| 选择方式 | 生效条件 |
+| :--- | :--- |
+| **专用策略** | 分组已勾选，且匹配当前账号映射后的实际模型 |
+| **默认策略** | 未命中专用策略，且 `default_strategy_enabled` 已开启 |
+| **不注入策略** | 未命中专用策略，且默认策略开关关闭 |
+
+策略目录描述可选配置，上游是否提供相应模型仍由账号决定。新增轻量策略标记为**未实测**；文本大小、结构检查与本地协议测试不代表真实模型效果。
+
+<details>
+<summary>展开完整模型目录</summary>
+
+| 模型系列 | 精确匹配的实际模型 ID |
+| --- | --- |
+| GPT（保留） | `gpt-5.6-sol`、`gpt-6.1-sol`、`gpt-6-astra` |
+| Claude | `claude-fable-5`、`claude-fable-5-1`、`claude-haiku-4-5`、`claude-haiku-5-5`、`claude-opus-4-5`、`claude-opus-4-6`、`claude-opus-4-7`、`claude-opus-4-8`、`claude-opus-5`、`claude-opus-5-5`、`claude-sonnet-4-5`、`claude-sonnet-4-6`、`claude-sonnet-5`、`claude-sonnet-5-5` |
+| Grok | `grok-4.7`、`grok-4.6`、`grok-build` |
+| Gemini | `gemini-3-flash`、`gemini-3.1-flash-image`、`gemini-3.1-pro`、`gemini-3.1-pro-preview`、`gemini-3.6-flash`、`gemini-3.7-flash`、`gemini-3.8-flash` |
+| DeepSeek | `deepseek-v4-flash`、`deepseek-v4-flash-0731`、`deepseek-v4-pro`、`deepseek-v4-pro-0813`、`deepseek-v4.1-flash` / `deepseek-4.1-flash` / `deepseek-flash`（`deepseek-v4.1-flash` 与 `deepseek-4.1-flash` 共用原寒霜策略，`deepseek-flash` 为独立寒霜策略） |
+| GLM | `glm-5.3`、`glm-5.3-flash`、`glm-5.3-air` |
+| Kimi | `kimi-k3`、`kimi-k2.7`、`kimi-k2.7-code`、`kimi-k2.6` |
+
+</details>
+
+<details>
+<summary>策略机制与调度规则：来源、正文体积、重试、冷却与故障转移</summary>
+
+默认策略从现有 `gpt-6-astra` 提示词的任务执行与连续任务机制改编为多模型 API 文本，见 [profiles/default.md](profiles/default.md) 和 [profiles/default.SOURCE.json](profiles/default.SOURCE.json)。正文为 3,844 字节 UTF-8，移除固定模型身份、本机工具环境和强制四文件交付等假设，保留客户端上下文和真实可用工具。开启后，未选专用策略的模型及目录外模型均可使用默认策略，前提仍是账号已勾选该实际模型。界面提示：“开启后，未勾选模型将采取默认提示词注入尝试进行破甲，如造成无法正常使用现象请关闭此选项”。分组 API 的 `PUT` 省略开关字段保留原值，显式 `false` 关闭；`null` 或非布尔值会被拒绝。
+
+目前 27 个策略继续使用冷咖啡正文，保留上游席位正文、工作链和完整路由技能，单次匹配注入约 64–66 KB 的 UTF-8 文本，会占用上下文并增加输入 token。v0.6.0 将 DeepSeek 4.1 Flash 的一个策略替换为寒霜改编正文，其余 DeepSeek 策略不变。冷咖啡历史来源、逐文件哈希及适配范围记录于 [profiles/coldcoffee/SOURCE.json](profiles/coldcoffee/SOURCE.json)；可用 `python scripts/import-coldcoffee.py UPSTREAM_CHECKOUT` 从指定版本的干净上游副本重新生成，脚本只读取数据，不执行安装器或 Skill。
+
+专用策略按精确模型选择，不按系列通配匹配。寒霜策略沿用 `coldcoffee-deepseek-v4.1-flash-v1`，已有分组选择继续匹配 `deepseek-v4.1-flash` 与 `deepseek-4.1-flash`；新增独立 `hanshuang-deepseek-flash-v1` 策略匹配 `deepseek-flash`，正文相同。名单表示策略选择，并不承诺上游提供这些模型；以账号实际可用模型和协议为准。冷咖啡、寒霜、Kimi 和 AI-Jailbreak 正文均为内联请求文本，代理不会安装本地 Skill、工具或客户端配置，也不会伪造工具执行结果。实际模型行为须在使用的中转站验证。
+
+AI-Jailbreak 六项轻量策略使用 `aijailbreak-<精确模型 ID>-v1`，GLM 与 Grok 的适配正文分别为 2,114 和 2,014 字节 UTF-8，字节数不等于 token 数。它们是基于上游技术交付、简洁输出、不确定性和上下文续接机制编写的英文 API 适配正文，按客户端语言回答；不是原始提示词的直接复制。现有 `coldcoffee-glm-5.3-v1` 与 `coldcoffee-grok-4.7-v1` 保持不变，已有分组不会自动切换。新增条目的可选 `metadata` 包含来源 URL、固定提交、`lightweight-api` 版本类型和 `unverified` 验证状态。本地测试确认路由、互斥和原请求保留，尚未进行真实模型效果评测。
+
+本次评估保留其他系列：DeepSeek 候选要求先输出重写请求并固定首轮结构，可能改变客户端的 JSON 或工具工作流；GPT、Claude、Gemini 和 Kimi 候选缺少现有精确型号的效果证据；通用候选也未证明优于现有默认策略。它们不在本版本中替换现有策略，评估范围记录于 [profiles/ai-jailbreak/SOURCE.json](profiles/ai-jailbreak/SOURCE.json)。
+
+调度仅选择匹配当前分组、协议且映射后实际模型已勾选的可用账号，未勾选任何可用模型的账号不接收请求。**优先级数字越小越先尝试**，相同优先级按账号 ID 稳定排序。单请求最多尝试 `最大重试数 + 1` 个不同账号。每次尝试都从原始客户端请求重新应用当前账号的单跳映射，再按实际模型匹配分组策略；故障转移到其他账号时独立计算，不继承或叠加前一账号的策略。连接失败、HTTP 401、403、408、429 和 HTTP 5xx 可在响应开始前切换到下一账号；只有多个匹配账号时才启用连续失败冷却，单账号池不会冻结。某请求对应的账号池全部进入冷却后，调度会同时清除该池冷却并重新轮询；若再次全部失败，会按相同规则循环。冷却时间到期的账号也会正常恢复。其余 4xx 原样返回，不触发重试。流式响应已开始后中断不会重放请求。RPM 窗口、并发及冷却状态只保存在当前进程，重启后重置；同一个数据卷只运行一个实例。
+
+安全入口将控制台从 `/` 移到 `/<入口>`，`/health` 和 `/v1/*` 不受影响。它是额外的入口隐藏措施，不代替登录认证。保存设置后请记录新的登录地址。
+
+</details>
+
+<a id="operations"></a>
+
+## 运维与数据
+
+### 控制台更新
+
+在 **系统设置 → GitHub 源码更新** 中检查正式 Release，并在验证当前管理员密码后执行更新。更新器会从官方标签构建镜像，展示构建、部署与健康检查日志。
+
+构建期间旧版本继续服务，切换版本时连接会短暂中断。部署或健康检查失败时，恢复旧版本及同一次数据备份。
+
+<details>
+<summary>更新器架构、自动检查、备份与升级注意事项</summary>
+
+v0.5.0 起，登录后自动检查新版本，并在页面可见时每 15 分钟复查；后台标签暂停检查，退出登录停止检查。发现更高的正式版本时，页面标题旁显示带圆点的黄色“有新版本”标签，点击进入系统设置并定位更新区域。手动检查与顶部提示同步。查询在服务端合并并发请求，成功缓存 5 分钟，失败退避 1 分钟；未配置更新器也可检查和提示，执行构建更新仍需配置更新器。
+
+v0.3.0 起可在 **系统设置 → GitHub 源码更新** 中检查 GitHub 最新正式 Release。选择更新后需再次输入当前管理员密码；更新器从官方仓库检出对应标签，在后台从源码构建镜像，并显示构建、部署和健康检查日志。构建期间旧版本继续服务，切换版本时会短暂中断连接；页面恢复后可继续查看结果。
+
+Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。主程序通过内部 `UPDATER_URL=http://updater:9000/` 及只读 `/control/token` 访问它。Docker socket 仅挂载给更新器，不挂载给公开的代理服务。更新器持有近似宿主机 root 的 Docker 控制能力，请仅在受控服务器上部署，不要对外暴露内部接口或共享令牌。
+
+源码构建成功后，更新器先停止代理并备份完整数据，再启动新镜像；部署或健康检查失败时恢复旧版本及同一次数据备份。更新状态和备份保留在 `update-state` 数据卷中，不能代替异地备份。账号、API key、分组、统计和 `master.key` 随数据卷保留。更新只接受官方仓库的正式版本标签，不支持输入任意地址或执行命令。
+
+旧版部署需先拉取本版本源码并执行一次上述 Compose 构建和启动命令，以安装更新器。使用自定义 Compose 项目名时，保持 `COMPOSE_PROJECT_NAME` 一致；不使用 Compose 或未配置更新器的本地开发环境只展示版本信息，不能在网页执行更新。更新代理镜像不会自行替换更新器或修改宿主机 Compose 文件；发布说明要求调整部署配置时仍需由管理员执行。
+
+</details>
+
+### 日志与统计
+
+仪表盘集中展示用量与趋势；独立的**调用日志**页面提供分页、JSON 导出、状态码、结构化错误、首字耗时和缓存 Token 信息，默认保留最近 **7 天**。
+
+<details>
+<summary>统计口径与存储：Token、缓存、UTC、保留期及加密范围</summary>
 
 - 仪表盘展示输入、输出、缓存及未命中 token、缓存命中率、RPM、TPM、总请求、成功率、平均耗时、每日图表、历史区间和 Cyber 标记次数。
 - Token 总量、Token 分布及相关缩写显示使用 `K`（千）、`M`（百万）、`B`（十亿）、`T`（万亿），缩写固定两位小数，例如 `90.48M`、`1.00B`；不足一千保持整数。仅更改显示，API 返回的用量仍为原始整数。
@@ -192,6 +346,8 @@ curl -N http://localhost:1990/v1/responses \
 - RPM / TPM 为最近 60 秒已结束并记录的请求；每日统计使用 UTC。总量和单密钥用量基于保留中的请求元数据，并非永久计费账本。默认保留 90 天，新请求写入时清理过期记录。
 - Cyber 计数表示响应中出现不区分大小写的 `cyber` 文本，每个响应最多计一次。它是文本启发式统计，不等同于特定弹窗、拒答或模型行为的检测结果。
 - `/data/zako.db` 保存配置、会话摘要和请求元数据。上游密钥及可再次复制的客户端密钥使用 `/data/master.key` 配合 AES-256-GCM 加密；管理员密码使用 Argon2 摘要。请求日志不持久化提示词或响应正文；SQLite 文件和其他元数据未进行整盘加密。
+
+</details>
 
 ### 备份与恢复
 
@@ -204,6 +360,57 @@ docker compose start
 ```
 
 恢复时先停止服务，将备份内容放回数据卷 `/data` 根目录并保留 `10001:10001` 所有权。数据库、SQLite 附属文件和 `master.key` 应来自同一次备份；缺少匹配主密钥的数据库不能解密存储的 API key。恢复后检查 `/health`、管理员登录和一次小型上游请求。请勿将备份提交到 Git。
+
+### 版本记录与旧版迁移
+
+当前版本 **v0.11.0** 增加 GLM / Grok 轻量策略，改进匹配账号池的冷却恢复，并保留既有分组策略选择。最近的界面更新为 **v0.10.0 樱花布丁主题**。
+
+<details>
+<summary>展开 v0.6.0–v0.11.0 更新说明与仓库改名迁移步骤</summary>
+
+#### v0.11.0 GLM / Grok 轻量策略与账号调度
+
+新增六个需要主动勾选的 AI-Jailbreak API 轻量策略，覆盖 `glm-5.3`、`glm-5.3-flash`、`glm-5.3-air`、`grok-4.7`、`grok-4.6` 和 `grok-build`。原 GLM-5.3 / Grok-4.7 冷咖啡策略及已有分组选择保留，同一精确模型的不同策略互斥。目录现为 42 个策略、41 个唯一模型 ID。轻量版标注来源、正文大小与“未实测”状态，不将体积减少或结构分视作效果提升。
+
+仪表盘移除数据导出按钮及对应导出功能，调用日志页的 JSON 导出保留。账号冷却按当前请求的分组、协议和实际模型筛出的候选池处理：只有一个候选账号时不进入冷却，全部候选账号冷却时清除该池冷却后重新轮询；单次请求仍最多尝试 `最大重试数 + 1` 个不同账号，RPM 与并发限制不变。升级保留数据和已有策略选择，无需数据库迁移。
+
+#### v0.10.0 樱花布丁主题
+
+控制台界面整体改为二次元风格的“樱花布丁”主题：以樱花粉、暖蜂蜜黄和奶油白为主色，卡片、按钮、输入框和弹窗采用更大的圆角；侧边栏和顶栏改为浮动卡片，系统设置与调用日志改为卡片布局，图表使用柔和的渐变填充，登录页和空状态新增“杂鱼酱”小鱼插画。界面西文字体由 Inter 改为 Nunito（OFL-1.1，随前端本地打包），中文继续使用系统字体。本版本只修改前端外观，API、数据与部署方式不变，升级无需额外操作。
+
+#### v0.9.3 Turnstile `.env` 配置与 Release 同步
+
+Turnstile 站点密钥和密钥统一保存在项目根目录 `.env`，系统设置保存时会自动更新该文件；旧数据库中的 Turnstile 配置会被清理。系统设置提供后台连接测试和右上角 Toast 提示。GitHub 源码更新以最新正式 Release 为准；当本地版本高于 Release 时，更新按钮会同步到该正式版本。
+
+#### v0.9.0 Turnstile 安全校验与日志统计改进
+
+系统设置支持配置 Cloudflare Turnstile 站点密钥和密钥，登录时启用人机校验；密钥加密保存且不会通过 API 返回。调用日志分页器支持键盘操作和移动端触控，仪表盘对大数量统计使用紧凑显示；新增超过千条 Cyber 事件的统计覆盖测试。
+
+#### v0.8.0 DeepSeek API 兼容策略
+
+为全部五个 DeepSeek 精确模型档案组合一层共享的 API 适配提示，吸收 dsh-purge 的请求期提示组装与上下文连续性思路；策略仍按映射后的实际模型选择，并沿用现有 Responses / Compact、Chat Completions 和 Anthropic 注入链路。原 profile ID 与旧版配置识别规则保留，模型目录数量不变。适配层以当前请求实际携带的消息、工具和结果为准，不假设 Harness 本地文件、hook、审批、沙箱、跨请求记忆或权限，也不声称修改上游模型策略。来源版本、改编范围和 MIT 声明见 [profiles/dsh-purge/SOURCE.json](profiles/dsh-purge/SOURCE.json) 与 [third_party/dsh-purge/NOTICE.md](third_party/dsh-purge/NOTICE.md)。
+
+#### v0.7.0 调用日志与请求链路修复
+
+密钥管理下新增独立调用日志，默认保留最近 7 天，每页 20 条，支持分页跳页、JSON 导出、清空日志、状态码和结构化 JSON/SSE 错误详情，并记录首字耗时及缓存读写 Token；仪表盘不再重复展示调用日志。Responses / Chat 流式工具请求现在在确认终止事件后及时释放并发槽；正常的长度限制或内容过滤不会误判为账号故障。账号冷却返回带真实剩余时间的 503，RPM 和并发本地限制保留 429，并提供机器可读错误原因。真实上游的 HTTP 状态、脱敏错误正文及 Retry-After 继续透传。
+
+#### v0.6.0 仓库改名后的首次升级
+
+官方仓库已改名为 ZakoProxyCLI。v0.5.0 及更早版本的更新器严格匹配旧 Release URL，因此仓库改名后网页检查或更新可能失败。请在原部署目录执行一次以下操作，同时替换 proxy 和 updater；保持原目录、Compose 项目名和数据卷不变。若本地修改导致拉取失败，请先处理冲突。
+
+```sh
+git remote set-url origin https://github.com/mizaawa/ZakoProxyCLI.git
+git pull --ff-only origin main
+docker compose build --pull
+docker compose up -d --no-build
+docker compose ps
+```
+
+镜像仍发布至 ghcr.io/mizaawa/zakoai-proxy-cli，保持现有部署兼容。v0.6.0 识别新旧官方 Release URL；本次首次迁移不能依赖旧更新器自动完成。
+
+</details>
+
+<a id="development"></a>
 
 ## 本地开发与 CI
 
@@ -227,13 +434,41 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
 ```
 
-## 开源协议与第三方声明
+<a id="notices"></a>
+
+## 使用须知与开源致谢
+
+### 使用须知
+
+> [!WARNING]
+> **严禁将本项目用于任何违法违纪活动。**
+
+本项目仅供合法、合规的学习、研究和在你本人有权操作的环境里使用。包括但不限于：未经授权的入侵、攻击、渗透、窃取数据；诈骗、洗钱、传播恶意程序；生成或传播违法有害内容；侵犯他人隐私、知识产权和其他合法权益；违反所在地法律法规或第三方平台、模型服务的使用条款。
+
+使用者须自行遵守所在国家和地区的法律法规，以及相关软件和服务的使用条款。使用本项目产生的一切行为和后果，由使用者自行承担，与项目作者及贡献者无关。如果你不同意以上内容，请不要下载、安装或使用本项目。
+
+<details>
+<summary>English disclaimer</summary>
+
+> [!WARNING]
+> **This project must NOT be used for any illegal or unlawful activity.**
+
+It is provided only for lawful and compliant learning, research, and use in environments you are authorized to operate. Prohibited uses include, without limitation: unauthorized intrusion, attacks, penetration, or data theft; fraud, money laundering, or distributing malware; generating or spreading illegal or harmful content; infringing others' privacy, intellectual property, or other legal rights; and violating applicable laws or the terms of use of third-party platforms and model services.
+
+You are solely responsible for complying with the laws and regulations of your jurisdiction and with the terms of the software and services you use. All actions and consequences arising from the use of this project are borne entirely by the user, and the authors and contributors accept no liability. If you do not agree, do not download, install, or use this project.
+
+</details>
+
+### 开源协议
 
 前端构建会自动收集锁定依赖的许可声明，包含 Nunito 字体的 SIL Open Font License。生成的 `assets/third-party-licenses.txt` 由站点提供，并随镜像保存至 `/app/licenses/frontend-notices.txt`。第三方组件保留各自的许可条款。
 
 本项目以 [MIT 协议](LICENSE) 开源。
 
-### 上游项目与许可遵循
+感谢 **gpt-instruct、冷咖啡、寒霜、kimi-break 与 AI-Jailbreak** 等上游项目的开源工作。来源版本、改编范围、许可保留与复现方式详见下方说明。
+
+<details>
+<summary>展开完整第三方来源、许可声明与复现方式</summary>
 
 内置指令配置借鉴并改编自 [MDX-Tom/gpt-instruct](https://github.com/MDX-Tom/gpt-instruct)，遵循其 [MIT 许可条款](https://github.com/MDX-Tom/gpt-instruct/blob/main/LICENSE)。感谢上游作者与贡献者的开源工作。
 
@@ -263,3 +498,15 @@ GLM / Grok 的六个轻量候选参考 [Baimuking/AI-Jailbreak](https://github.c
 - **上游版权与协议：** Copyright (c) 2026 Baimuking，MIT License。原始参考正文、许可和改编说明保留于 [third_party/ai-jailbreak](third_party/ai-jailbreak)，容器附带 `/app/licenses/ai-jailbreak.LICENSE` 与 `/app/licenses/ai-jailbreak.NOTICE.md`。
 - **API 适配范围：** 保留直接交付、完整产物、明确不确定性及上下文续接思路，改为实际请求上下文和工具能力；去掉固定本地身份、默认全部授权、指令优先级覆盖、无条件禁用措辞和跨请求记忆假设。未执行或安装上游 CLI、安装器或代理配置。
 - **来源与复现：** [profiles/ai-jailbreak/SOURCE.json](profiles/ai-jailbreak/SOURCE.json) 记录源文件与产物 SHA-256、字节数和评估结论。`python scripts/import-ai-jailbreak.py --check` 完全离线核验，去掉 `--check` 可重新生成。上游卡片和本站适配均为未实测状态，结构分及协议测试不代表模型效果或破甲成功率。
+
+</details>
+
+---
+
+<div align="center">
+
+**ZakoAI Proxy · 自托管，让你的 AI 接入更有条理。**
+
+[回到顶部](#zakoai-proxy) · [查看 Releases](https://github.com/mizaawa/ZakoProxyCLI/releases) · [提交 Issue](https://github.com/mizaawa/ZakoProxyCLI/issues)
+
+</div>
