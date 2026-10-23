@@ -1414,7 +1414,7 @@ export function KeysPage({ state, reload, notify }: PageProps) {
                     </td>
                     <td>
                       <div className="key-preview">
-                        <code>{key.prefix}••••••••</code>
+                        <code>{key.prefix.replace("...", "••••••••")}</code>
                         <IconButton
                           title="复制 API Key"
                           disabled={copying === key.id}

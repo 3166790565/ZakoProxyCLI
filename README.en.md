@@ -82,6 +82,14 @@ Images retain ghcr.io/mizaawa/zakoai-proxy-cli for existing deployments. v0.6.0 
 
 For example, the account configuration fragment `{"models":["gpt-6-astra"],"model_mappings":{"chat-main":"gpt-6-astra"}}` accepts a client request for `chat-main` and sends `model: "gpt-6-astra"` upstream. Selecting the group's `gpt-6-astra` strategy applies that actual model's profile, not a profile for the alias. An unmapped request for `gpt-6-astra` still uses that same actual model. These mapping and profile matching rules apply to every supported protocol.
 
+### v0.11.1 Cyber Detection And Key Display Fixes
+
+Cyber detection now checks only assistant output text and refusal text. The previous detector scanned the entire response, so echoed `instructions`, `input`, `metadata`, `model`, or `id` could incorrectly mark a request as Cyber. Tool arguments, reasoning content, errors, and metadata no longer participate in detection; matching also works across streaming deltas and network chunks.
+
+The fix applies to new requests after upgrading and reuses the existing database without a migration. Historical logs do not store response bodies, so their classifications cannot be reliably recalculated; existing flags and statistics are retained rather than automatically cleared.
+
+Key management now displays `sk-zako-8f2a078••••••••bba6`, keeping the prefix and final four characters with eight bullets between them. The redundant trailing mask is removed; the copy button still copies the complete key.
+
 ### v0.11.0 GLM / Grok Lightweight Profiles And Account Scheduling
 
 Six opt-in AI-Jailbreak API profiles cover `glm-5.3`, `glm-5.3-flash`, `glm-5.3-air`, `grok-4.7`, `grok-4.6`, and `grok-build`. Existing GLM-5.3 / Grok-4.7 coldcoffee profiles and group selections remain available. Variants targeting the same exact model are mutually exclusive. The catalog now contains 42 profiles for 41 unique model IDs; lightweight entries expose provenance, instruction size, and an unverified status. Smaller text and structural scores are not evidence of better model behavior.

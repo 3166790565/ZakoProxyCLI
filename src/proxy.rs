@@ -22,6 +22,8 @@ const MAX_JSON_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TRACKED_CHAT_CHOICES: u64 = 1024;
 const MAX_ERROR_BYTES: usize = 2048;
 
+mod cyber;
+
 fn route_for(protocol: &str) -> &'static str {
     match protocol {
         "compact" => "responses/compact",
@@ -939,7 +941,7 @@ fn response_error(value: &Value, event_name: &str, http_error: bool) -> Option<S
     }
 }
 
-// Keep only one bounded event and a small marker window, never request/response content in logs.
+// Keep bounded parser buffers and per-channel marker state, never response content in logs.
 struct Observer {
     sse: bool,
     line: Vec<u8>,
@@ -949,7 +951,7 @@ struct Observer {
     discard_line: bool,
     json: Vec<u8>,
     json_oversized: bool,
-    marker: Vec<u8>,
+    marker: cyber::CyberDetector,
     cyber: bool,
     usage: Usage,
     completed: bool,
@@ -972,7 +974,7 @@ impl Observer {
             discard_line: false,
             json: Vec::new(),
             json_oversized: false,
-            marker: Vec::new(),
+            marker: cyber::CyberDetector::default(),
             cyber: false,
             usage: Usage::default(),
             completed: false,
@@ -987,15 +989,6 @@ impl Observer {
         }
     }
     fn feed(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            self.marker.push(byte.to_ascii_lowercase());
-            if self.marker.len() > 5 {
-                self.marker.remove(0);
-            }
-            if self.marker == b"cyber" {
-                self.cyber = true;
-            }
-        }
         if !self.sse {
             if !self.json_oversized && self.json.len().saturating_add(bytes.len()) <= MAX_JSON_BYTES
             {
@@ -1064,6 +1057,9 @@ impl Observer {
             return;
         }
         if let Ok(value) = serde_json::from_slice::<Value>(data) {
+            if !self.cyber && !self.http_error {
+                self.cyber = self.marker.observe(&value, event_name, self.sse);
+            }
             let usage = store::usage(&value);
             self.usage.input_tokens = self.usage.input_tokens.max(usage.input_tokens);
             self.usage.output_tokens = self.usage.output_tokens.max(usage.output_tokens);
@@ -1149,6 +1145,10 @@ impl Observer {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "proxy/cyber_tests.rs"]
+mod cyber_tests;
 
 // A rolling suffix prevents credentials split between network chunks from leaking.
 struct SecretFilter {
