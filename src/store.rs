@@ -29,10 +29,12 @@ pub struct Group {
     #[serde(default)]
     pub id: String,
     pub name: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub profile_ids: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub default_strategy_enabled: bool,
+    #[serde(default)]
+    pub description: String,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +46,8 @@ struct GroupInput {
     profile_ids: Option<Vec<String>>,
     #[serde(default)]
     default_strategy_enabled: bool,
+    #[serde(default)]
+    description: String,
     #[serde(default)]
     models: Vec<String>,
     #[serde(default)]
@@ -71,17 +75,31 @@ impl From<GroupInput> for Group {
             name: input.name,
             profile_ids,
             default_strategy_enabled: input.default_strategy_enabled,
+            description: input.description,
         }
     }
 }
-#[derive(Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ProviderBinding {
+    pub provider_id: String,
+    pub key_id: String,
+    pub key_name: String,
+    pub group_name: String,
+    pub group_multiplier: Option<f64>,
+    pub status: String,
+    pub last_synced_at: i64,
+}
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Account {
     #[serde(default)]
     pub id: String,
     pub name: String,
+    #[serde(default)]
     pub endpoint: String,
     #[serde(default)]
     pub api_key: String,
+    #[serde(default)]
+    pub provider_binding: Option<ProviderBinding>,
     /// Encrypted SOCKS proxy URL; never returned by account APIs.
     #[serde(default)]
     pub proxy_url: String,
@@ -103,6 +121,11 @@ pub struct Account {
     pub protocols: Vec<String>,
 }
 impl Account {
+    pub fn provider_available(&self) -> bool {
+        self.provider_binding
+            .as_ref()
+            .is_none_or(|binding| binding.status == "active" && !self.api_key.is_empty())
+    }
     pub fn actual_model<'a>(&'a self, requested: &'a str) -> Option<&'a str> {
         let actual = self
             .model_mappings
@@ -131,6 +154,10 @@ pub struct ApiKey {
     pub id: String,
     pub name: String,
     pub group_id: String,
+    #[serde(default)]
+    pub profile_ids: Vec<String>,
+    #[serde(default)]
+    pub default_strategy_enabled: bool,
     #[serde(default)]
     pub secret: String,
     #[serde(default)]
@@ -171,6 +198,35 @@ pub struct Config {
     pub groups: Vec<Group>,
     pub accounts: Vec<Account>,
     pub keys: Vec<ApiKey>,
+    #[serde(default)]
+    pub providers: Vec<crate::providers::Provider>,
+    #[serde(default)]
+    key_strategy_schema: u8,
+}
+
+fn migrate_key_strategies(config: &mut Config, raw: &Value) {
+    if config.key_strategy_schema > 0 {
+        return;
+    }
+    for group in &mut config.groups {
+        for (index, key) in config
+            .keys
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, key)| key.group_id == group.id)
+        {
+            let original = &raw["keys"][index];
+            if original.get("profile_ids").is_none() {
+                key.profile_ids = group.profile_ids.clone();
+            }
+            if original.get("default_strategy_enabled").is_none() {
+                key.default_strategy_enabled = group.default_strategy_enabled;
+            }
+        }
+        group.profile_ids.clear();
+        group.default_strategy_enabled = false;
+    }
+    config.key_strategy_schema = 1;
 }
 #[derive(Clone, Serialize, Deserialize, Default, Debug)]
 #[serde(from = "UsageInput")]
@@ -237,14 +293,21 @@ pub struct Store {
     cipher: Aes256Gcm,
 }
 fn read_config(db: &Connection) -> Result<Config> {
-    db.query_row("SELECT value FROM config WHERE id=1", [], |row| {
-        row.get::<_, String>(0)
-    })
-    .optional()
-    .map_err(|e| e.to_string())?
-    .map(|value| serde_json::from_str::<Config>(&value).map_err(|e| e.to_string()))
-    .transpose()
-    .map(Option::unwrap_or_default)
+    let raw = db
+        .query_row("SELECT value FROM config WHERE id=1", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()
+        .map_err(|e| e.to_string())?
+        .map(|value| serde_json::from_str::<Value>(&value).map_err(|e| e.to_string()))
+        .transpose()?;
+    let mut config = raw
+        .as_ref()
+        .map(|value| serde_json::from_value::<Config>(value.clone()).map_err(|e| e.to_string()))
+        .transpose()?
+        .unwrap_or_default();
+    migrate_key_strategies(&mut config, raw.as_ref().unwrap_or(&Value::Null));
+    Ok(config)
 }
 fn write_config(db: &Connection, config: &Config) -> Result<()> {
     db.execute(
@@ -326,14 +389,18 @@ impl Store {
         };
         let cipher =
             Aes256Gcm::new_from_slice(&key).map_err(|_| "Invalid master.key".to_owned())?;
-        let db = Connection::open(dir.join("zako.db")).map_err(|e| e.to_string())?;
+        let mut db = Connection::open(dir.join("zako.db")).map_err(|e| e.to_string())?;
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
             CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, expires INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, timestamp INTEGER NOT NULL, value TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS requests_time ON requests(timestamp);") .map_err(|e| e.to_string())?;
-        clear_legacy_turnstile_settings(&db)?;
-        prune_logs(&db, read_config(&db)?.settings.retention_days)?;
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        clear_legacy_turnstile_settings(&tx)?;
+        let config = read_config(&tx)?;
+        write_config(&tx, &config)?;
+        prune_logs(&tx, config.settings.retention_days)?;
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(Self {
             db: Mutex::new(db),
             cipher,

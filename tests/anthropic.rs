@@ -31,6 +31,7 @@ fn fixture() -> (tempfile::TempDir, Shared) {
                 name: "Anthropic".into(),
                 profile_ids: vec![],
                 default_strategy_enabled: false,
+                description: String::new(),
             });
             config.keys.push(ApiKey {
                 id: "anthropic-key".into(),
@@ -294,7 +295,7 @@ async fn anthropic_forwards_credentials_headers_model_and_native_system_without_
     state
         .store
         .update(|config| {
-            config.groups[0].profile_ids = vec![profile.id.clone()];
+            config.keys[0].profile_ids = vec![profile.id.clone()];
             Ok(())
         })
         .unwrap();
@@ -411,8 +412,7 @@ async fn anthropic_failover_rebuilds_mapping_and_system_from_the_original_reques
     state
         .store
         .update(|config| {
-            config.groups[0].profile_ids =
-                vec![first_profile.id.clone(), second_profile.id.clone()];
+            config.keys[0].profile_ids = vec![first_profile.id.clone(), second_profile.id.clone()];
             Ok(())
         })
         .unwrap();

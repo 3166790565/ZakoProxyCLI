@@ -56,9 +56,11 @@ function beginning(daysAgo: number) {
 export function Dashboard({
   revision,
   notify,
+  onLoadingChange,
 }: {
   revision: number;
   notify: Notice;
+  onLoadingChange?: (loading: boolean) => void;
 }) {
   const [from, setFrom] = useState(beginning(6));
   const [to, setTo] = useState(beginning(0));
@@ -68,6 +70,7 @@ export function Dashboard({
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [metric, setMetric] = useState<"tokens" | "requests">("tokens");
+  useEffect(() => { onLoadingChange?.(loading); }, [loading, onLoadingChange]);
   useEffect(() => {
     let cancelled = false;
     const load = async (initial: boolean) => {

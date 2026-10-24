@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import type { ButtonHTMLAttributes, FormEvent, ReactNode } from "react";
 import {
   AlertCircle,
@@ -231,6 +231,7 @@ export function Modal({
   busy?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
     const dialog = ref.current;
     dialog?.showModal();
@@ -243,11 +244,11 @@ export function Modal({
       onCancel={(event) => {
         event.preventDefault();
       }}
-      aria-labelledby="modal-title"
+      aria-labelledby={titleId}
     >
       <div className="modal-header">
         <div>
-          <h2 id="modal-title">{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           {subtitle && <p>{subtitle}</p>}
         </div>
         <IconButton title="取消" onClick={onClose} disabled={busy}>
@@ -265,6 +266,7 @@ export function ModalForm({
   onClose,
   busy,
   submit = "保存",
+  submitDisabled = false,
   error,
 }: {
   children: ReactNode;
@@ -272,6 +274,7 @@ export function ModalForm({
   onClose: () => void;
   busy: boolean;
   submit?: string;
+  submitDisabled?: boolean;
   error: string;
 }) {
   return (
@@ -284,7 +287,7 @@ export function ModalForm({
         <Button type="button" onClick={onClose} disabled={busy}>
           取消
         </Button>
-        <Button type="submit" className="primary" busy={busy}>
+        <Button type="submit" className="primary" busy={busy} disabled={submitDisabled}>
           {submit}
         </Button>
       </div>

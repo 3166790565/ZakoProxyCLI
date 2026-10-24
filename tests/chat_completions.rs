@@ -32,6 +32,7 @@ fn fixture() -> (tempfile::TempDir, Shared) {
                 name: "Chat".into(),
                 profile_ids: Vec::new(),
                 default_strategy_enabled: false,
+                description: String::new(),
             });
             config.keys.push(ApiKey {
                 id: "chat-key".into(),
@@ -85,7 +86,7 @@ fn select_profiles(state: &Shared, ids: Vec<String>) {
     state
         .store
         .update(|config| {
-            config.groups[0].profile_ids = ids;
+            config.keys[0].profile_ids = ids;
             Ok(())
         })
         .unwrap();
@@ -478,7 +479,7 @@ async fn chat_protocol_can_be_saved_and_is_enabled_by_default() {
 }
 
 #[tokio::test]
-async fn group_profile_limit_uses_catalog_size_after_deduplication() {
+async fn key_profile_limit_uses_catalog_size_after_deduplication() {
     let (_dir, state) = fixture();
     let mut models = std::collections::HashSet::new();
     let ids: Vec<_> = profiles::all()
@@ -492,16 +493,36 @@ async fn group_profile_limit_uses_catalog_size_after_deduplication() {
         })
         .map(|profile| profile.id.clone())
         .collect();
+    state
+        .store
+        .update(|config| {
+            config.accounts.push(Account {
+                id: "catalog-account".into(),
+                name: "Catalog".into(),
+                models: models.into_iter().collect(),
+                group_ids: vec!["chat-group".into()],
+                enabled: true,
+                ..Default::default()
+            });
+            Ok(())
+        })
+        .unwrap();
     let duplicate_ids: Vec<_> = ids.iter().chain(&ids).cloned().collect();
-    let (status, group) = admin_request(
+    let (status, key) = admin_request(
         &state,
         "POST",
-        "/api/groups",
-        json!({"name":"Catalog sized", "profile_ids":duplicate_ids}),
+        "/api/keys",
+        json!({"name":"Catalog sized", "group_id":"chat-group", "profile_ids":duplicate_ids}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{group}");
-    assert_eq!(group["profile_ids"], json!(ids));
+    assert_eq!(status, StatusCode::OK, "{key}");
+    let config = state.store.config().unwrap();
+    let key = config
+        .keys
+        .iter()
+        .find(|item| item.id == key["id"])
+        .unwrap();
+    assert_eq!(key.profile_ids, ids);
 }
 
 #[tokio::test]

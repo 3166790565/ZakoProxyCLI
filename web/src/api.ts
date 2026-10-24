@@ -52,8 +52,7 @@ export async function api<T = unknown>(
 export type Group = {
   id: string;
   name: string;
-  profile_ids: string[];
-  default_strategy_enabled: boolean;
+  description: string;
 };
 export type Account = {
   id: string;
@@ -71,6 +70,50 @@ export type Account = {
   has_proxy: boolean;
   proxy_display: string;
   runtime: { active: number; failures: number; cooldown_until: number };
+  provider_binding?: ProviderBinding | null;
+};
+export type ProviderBinding = {
+  provider_id: string;
+  key_id: string;
+  key_name: string;
+  group_name: string;
+  group_multiplier: number | null;
+  status: string;
+  last_synced_at: number | null;
+};
+export type ProviderSummary = {
+  id: string;
+  name: string;
+  kind: "sub2api" | "newapi";
+  base_url: string;
+  status: string;
+  official?: boolean;
+  readonly?: boolean;
+  pinned?: boolean;
+};
+export type ProviderKeyGroup = { id: string; name: string; multiplier: number | null };
+export type ProviderKeyGroups = { provider_id: string; groups: ProviderKeyGroup[] };
+export type ProviderKeyCreated = { provider_id: string; created: true; name: string; group_id: string };
+export type ProviderAccountKey = {
+  id: string;
+  name: string;
+  group_name: string;
+  group_multiplier: number | null;
+  status: string;
+  available: boolean;
+};
+export type ProviderAccountKeys = {
+  provider_id: string;
+  endpoint: string;
+  keys: ProviderAccountKey[];
+  synced_at: number | null;
+};
+export type AccountProviderBinding = {
+  account_id: string;
+  endpoint: string;
+  provider_binding: ProviderBinding | null;
+  available: boolean;
+  synced_at: number | null;
 };
 export type ProxyTestResult = {
   connected: boolean;
@@ -122,6 +165,8 @@ export type RelayKey = {
   name: string;
   group_id: string;
   enabled: boolean;
+  profile_ids: string[];
+  default_strategy_enabled: boolean;
   prefix: string;
   created_at: number;
   usage: Usage;

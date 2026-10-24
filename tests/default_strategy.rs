@@ -69,8 +69,8 @@ fn select(state: &Shared, enabled: bool, ids: Vec<String>) {
     state
         .store
         .update(|config| {
-            config.groups[0].default_strategy_enabled = enabled;
-            config.groups[0].profile_ids = ids;
+            config.keys[0].default_strategy_enabled = enabled;
+            config.keys[0].profile_ids = ids;
             Ok(())
         })
         .unwrap();
@@ -210,65 +210,54 @@ fn assert_injection(
 }
 
 #[tokio::test]
-async fn old_groups_default_off_and_api_omission_preserves_explicit_toggle() {
-    let legacy: Group =
-        serde_json::from_value(json!({"id":"legacy","name":"Legacy","profile_ids":[]})).unwrap();
+async fn new_keys_default_off_and_api_omission_preserves_explicit_toggle() {
+    let legacy: ApiKey = serde_json::from_value(json!({
+        "id":"legacy", "name":"Legacy", "group_id":"group"
+    }))
+    .unwrap();
     assert!(!legacy.default_strategy_enabled);
-    assert_eq!(
-        serde_json::to_value(&legacy).unwrap()["default_strategy_enabled"],
-        false
-    );
+    assert!(legacy.profile_ids.is_empty());
     let (dir, state) = fixture();
     let (status, created) = console(
         &state,
         "POST",
-        "/api/groups",
-        json!({"name":"Default off","profile_ids":[]}),
+        "/api/keys",
+        json!({"name":"Default off", "group_id":"group"}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(created["default_strategy_enabled"], false);
-    let (status, created_enabled) = console(
-        &state,
-        "POST",
-        "/api/groups",
-        json!({"name":"Explicit opt in","profile_ids":[],"default_strategy_enabled":true}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(created_enabled["default_strategy_enabled"], true);
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let config = state.store.config().unwrap();
+    let created_key = config
+        .keys
+        .iter()
+        .find(|key| key.id == created["id"])
+        .unwrap();
+    assert!(!created_key.default_strategy_enabled);
+    assert!(created_key.profile_ids.is_empty());
     let (status, enabled) = console(
-        &state,
-        "PUT",
-        "/api/groups/group",
-        json!({"name":"Enabled","profile_ids":[],"default_strategy_enabled":true}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(enabled["default_strategy_enabled"], true);
+        &state, "PUT", "/api/keys/key",
+        json!({"name":"Enabled", "group_id":"group", "profile_ids":[], "default_strategy_enabled":true}),
+    ).await;
+    assert_eq!(status, StatusCode::OK, "{enabled}");
     let (status, preserved) = console(
         &state,
         "PUT",
-        "/api/groups/group",
-        json!({"name":"Renamed by old client","profile_ids":[]}),
+        "/api/keys/key",
+        json!({"name":"Renamed by old client", "group_id":"group"}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(preserved["default_strategy_enabled"], true);
-    let (_, listed) = console(&state, "GET", "/api/groups", Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "{preserved}");
+    let (_, listed) = console(&state, "GET", "/api/keys", Value::Null).await;
     assert_eq!(listed[0]["default_strategy_enabled"], true);
+    assert_eq!(listed[0]["profile_ids"], json!([]));
     let reopened = new_app(dir.path(), dir.path().join("web")).unwrap();
-    assert!(reopened.store.config().unwrap().groups[0].default_strategy_enabled);
+    assert!(reopened.store.config().unwrap().keys[0].default_strategy_enabled);
     drop(reopened);
     let (status, disabled) = console(
-        &state,
-        "PUT",
-        "/api/groups/group",
-        json!({"name":"Disabled","profile_ids":[],"default_strategy_enabled":false}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(disabled["default_strategy_enabled"], false);
+        &state, "PUT", "/api/keys/key",
+        json!({"name":"Disabled", "group_id":"group", "profile_ids":[], "default_strategy_enabled":false}),
+    ).await;
+    assert_eq!(status, StatusCode::OK, "{disabled}");
     drop(state);
     assert!(
         !new_app(dir.path(), dir.path().join("web"))
@@ -276,13 +265,13 @@ async fn old_groups_default_off_and_api_omission_preserves_explicit_toggle() {
             .store
             .config()
             .unwrap()
-            .groups[0]
+            .keys[0]
             .default_strategy_enabled
     );
 }
 
 #[tokio::test]
-async fn invalid_nonboolean_default_strategy_is_rejected_without_changing_groups() {
+async fn invalid_nonboolean_default_strategy_is_rejected_without_changing_keys() {
     let (_dir, state) = fixture();
     select(&state, true, vec![]);
     for invalid in [
@@ -294,18 +283,16 @@ async fn invalid_nonboolean_default_strategy_is_rejected_without_changing_groups
         json!([]),
         json!({}),
     ] {
-        let body = json!({"name":"Invalid","profile_ids":[],"default_strategy_enabled":invalid});
-        assert!(serde_json::from_value::<Group>(body.clone()).is_err());
-        for (method, path) in [("POST", "/api/groups"), ("PUT", "/api/groups/group")] {
+        let body = json!({"name":"Invalid", "group_id":"group", "profile_ids":[], "default_strategy_enabled":invalid});
+        for (method, path) in [("POST", "/api/keys"), ("PUT", "/api/keys/key")] {
             assert_eq!(
                 console(&state, method, path, body.clone()).await.0,
                 StatusCode::UNPROCESSABLE_ENTITY
             );
         }
-        let groups = state.store.config().unwrap().groups;
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].name, "Default strategy");
-        assert!(groups[0].default_strategy_enabled);
+        let keys = state.store.config().unwrap().keys;
+        assert_eq!(keys.len(), 1);
+        assert!(keys[0].default_strategy_enabled);
     }
 }
 
@@ -394,6 +381,59 @@ async fn all_protocols_toggle_fallback_and_preserve_streaming_payloads() {
         }
     }
     assert_eq!(captured.lock().unwrap().len(), 16);
+}
+
+#[tokio::test]
+async fn keys_in_same_group_keep_independent_policies_in_every_protocol() {
+    let (endpoint, _server) =
+        serve(Router::new().fallback(post(|Json(body): Json<Value>| async { Json(body) }))).await;
+    let (_dir, state) = fixture();
+    let profile = &profiles::all()[0];
+    let model = &profile.models[0];
+    add_account(&state, &endpoint, "shared-account", model, model, 0);
+    select(&state, true, vec![profile.id.clone()]);
+    state
+        .store
+        .update(|config| {
+            config.keys.push(ApiKey {
+                id: "plain-key".into(),
+                name: "Plain".into(),
+                group_id: "group".into(),
+                hash: store::digest("plain-route-key"),
+                enabled: true,
+                ..Default::default()
+            });
+            Ok(())
+        })
+        .unwrap();
+    for protocol in PROTOCOLS {
+        for (secret, instruction) in [
+            ("route-key", Some(profile.instruction.as_str())),
+            ("plain-route-key", None),
+        ] {
+            let original = original(protocol, model, false);
+            let response = app(state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path(protocol))
+                        .header("content-type", "application/json")
+                        .header("authorization", format!("Bearer {secret}"))
+                        .body(Body::from(original.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let actual: Value = serde_json::from_slice(
+                &to_bytes(response.into_body(), 2 * 1024 * 1024)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_injection(protocol, &actual, &original, model, instruction);
+        }
+    }
 }
 
 #[tokio::test]

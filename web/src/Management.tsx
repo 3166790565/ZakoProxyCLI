@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   Activity,
@@ -17,11 +17,11 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  ShieldCheck,
+  Server,
   Trash2,
 } from "lucide-react";
 import { api, copy, errorMessage, number, time, tokenCount } from "./api";
-import type { Account, Group, Profile, ProxyTestResult, RelayKey, State } from "./api";
+import type { Account, Group, Profile, ProviderBinding, ProxyTestResult, RelayKey, State } from "./api";
 import {
   Badge,
   Button,
@@ -39,6 +39,8 @@ import {
 } from "./components";
 import type { Notice } from "./components";
 import { GroupSelect } from "./GroupSelect";
+import { ProviderAccountImport } from "./ProviderAccountImport";
+import type { ProviderAccountSelection } from "./ProviderAccountImport";
 
 export type PageProps = {
   state: State;
@@ -139,29 +141,33 @@ function TableFooter({
   );
 }
 
-function groupModels(group: Group, profiles: Profile[]) {
-  return [
-    ...new Set(
-      profiles
-        .filter((profile) => group.profile_ids.includes(profile.id))
-        .flatMap((profile) => profile.models),
-    ),
-  ];
-}
-
 function profileDisplayModels(profile: Profile) {
-  // Keep both spellings in the API for exact model matching, but retain the
-  // historical single label in the group editor.
+  // Keep both spellings in the API for exact model matching, while showing
+  // the single public model ID on this profile card.
   return profile.id === "coldcoffee-deepseek-v4.1-flash-v1"
     ? ["deepseek-4.1-flash"]
     : profile.models;
 }
 
-function profileVariantLabel(profile: Profile) {
-  if (profile.metadata?.variant === "lightweight-api")
-    return "AI-Jailbreak · 轻量实验版";
-  if (profile.id.startsWith("coldcoffee-")) return "冷咖啡 · 原版";
-  return profile.name;
+function supportedModelsForGroup(groupId: string, accounts: Account[]) {
+  const supported = new Set<string>();
+  for (const account of accounts) {
+    if (
+      !account.enabled ||
+      !account.group_ids.includes(groupId) ||
+      (account.provider_binding &&
+        (account.provider_binding.status !== "active" || !account.has_api_key))
+    ) continue;
+    for (const model of account.models) {
+      if (model.trim()) supported.add(model);
+    }
+  }
+  return supported;
+}
+
+function profilesSupportedByGroup(groupId: string, accounts: Account[], profiles: Profile[]) {
+  const supported = supportedModelsForGroup(groupId, accounts);
+  return profiles.filter((profile) => profile.models.some((model) => supported.has(model)));
 }
 
 export function GroupsPage({ state, reload, notify }: PageProps) {
@@ -169,7 +175,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
   const [editing, setEditing] = useState<Group | "new" | null>(null);
   const [deleting, setDeleting] = useState<Group | null>(null);
   const filtered = state.groups.filter((group) =>
-    `${group.name} ${groupModels(group, state.profiles).join(" ")}`
+    `${group.name} ${group.description || ""}`
       .toLowerCase()
       .includes(search.toLowerCase()),
   );
@@ -204,10 +210,10 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
         </div>
         <div>
           <span className="summary-icon">
-            <ShieldCheck size={19} />
+            <KeyRound size={19} />
           </span>
           <span>
-            破甲策略<strong>{state.profiles.length}</strong>
+            密钥<strong>{state.keys.length}</strong>
           </span>
         </div>
       </div>
@@ -216,7 +222,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
           <SearchInput
             value={search}
             onChange={setSearch}
-            placeholder="搜索分组或策略模型…"
+            placeholder="搜索分组或简介…"
           />
           <span className="toolbar-meta">
             <ListFilter size={15} />
@@ -229,18 +235,14 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
               <thead>
                 <tr>
                   <th>分组名称</th>
-                  <th>破甲策略</th>
+                  <th>简介</th>
                   <th>账号</th>
                   <th>密钥</th>
-                  <th>策略状态</th>
                   <th className="action-cell">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((group) => {
-                  const effectiveModels = groupModels(group, state.profiles);
-                  const configured =
-                    effectiveModels.length > 0 || group.default_strategy_enabled;
                   return (
                     <tr key={group.id}>
                       <td>
@@ -257,20 +259,11 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
                         </div>
                       </td>
                       <td>
-                        <div className="model-badges">
-                          {effectiveModels.slice(0, 2).map((model) => (
-                            <Badge key={model}>{model}</Badge>
-                          ))}
-                          {effectiveModels.length > 2 && (
-                            <Badge>+{effectiveModels.length - 2}</Badge>
-                          )}
-                          {group.default_strategy_enabled && (
-                            <Badge variant="green">默认策略</Badge>
-                          )}
-                          {!configured && (
-                            <span className="muted">未启用策略</span>
-                          )}
-                        </div>
+                        {group.description?.trim() && (
+                          <span className="group-description-preview">
+                            {group.description}
+                          </span>
+                        )}
                       </td>
                       <td className="mono">
                         {
@@ -284,11 +277,6 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
                           state.keys.filter((key) => key.group_id === group.id)
                             .length
                         }
-                      </td>
-                      <td>
-                        <Badge variant={configured ? "green" : "neutral"} dot>
-                          {configured ? "已启用" : "未启用"}
-                        </Badge>
                       </td>
                       <td>
                         <div className="row-actions">
@@ -316,7 +304,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
         ) : (
           <Empty
             title={search ? "没有匹配的分组" : "还没有分组"}
-            detail={search ? "尝试其他分组名称或模型 ID" : "创建第一个分组"}
+            detail={search ? "尝试其他分组名称或简介" : "创建第一个分组"}
             action={
               !search && (
                 <Button onClick={() => setEditing("new")}>
@@ -357,63 +345,14 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
 
 function GroupForm({
   group,
-  state,
   reload,
   notify,
   onClose,
 }: PageProps & { group?: Group; onClose: () => void }) {
   const [name, setName] = useState(group?.name || "");
-  const [profiles, setProfiles] = useState<string[]>(group?.profile_ids || []);
-  const [defaultStrategyEnabled, setDefaultStrategyEnabled] = useState(
-    group?.default_strategy_enabled ?? false,
-  );
-  const [profileSearch, setProfileSearch] = useState("");
+  const [description, setDescription] = useState(group?.description || "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const profileDetails = useMemo(() => {
-    const modelCounts = new Map<string, number>();
-    for (const profile of state.profiles) {
-      for (const model of profile.models)
-        modelCounts.set(model, (modelCounts.get(model) || 0) + 1);
-    }
-    const encoder = new TextEncoder();
-    return new Map(
-      state.profiles
-        .filter(
-          (profile) =>
-            profile.metadata ||
-            profile.models.some((model) => (modelCounts.get(model) || 0) > 1),
-        )
-        .map((profile) => [
-          profile.id,
-          {
-            variant: profileVariantLabel(profile),
-            bytes: encoder.encode(profile.instruction).length,
-          },
-        ]),
-    );
-  }, [state.profiles]);
-  const visibleProfiles = useMemo(() => {
-    const query = profileSearch.trim().toLowerCase();
-    return [...state.profiles]
-      .sort(
-        (a, b) =>
-          modelNameOrder.compare(
-            profileDisplayModels(a).join(" · "),
-            profileDisplayModels(b).join(" · "),
-          ) ||
-          Number(Boolean(a.metadata)) - Number(Boolean(b.metadata)) ||
-          modelNameOrder.compare(a.id, b.id),
-      )
-      .filter((item) =>
-        [
-          ...item.models,
-          item.name,
-          profileVariantLabel(item),
-          item.metadata?.source_url || "",
-        ].some((value) => value.toLowerCase().includes(query)),
-      );
-  }, [state.profiles, profileSearch]);
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -424,8 +363,7 @@ function GroupForm({
         group ? "PUT" : "POST",
         {
           name: name.trim(),
-          profile_ids: profiles,
-          default_strategy_enabled: defaultStrategyEnabled,
+          description: description.trim(),
         },
       );
       await reload();
@@ -440,10 +378,9 @@ function GroupForm({
   return (
     <Modal
       title={group ? "编辑分组" : "创建分组"}
-      subtitle="破甲策略"
+      subtitle="分组简介"
       onClose={onClose}
       busy={busy}
-      wide
     >
       <ModalForm
         onSubmit={submit}
@@ -462,116 +399,16 @@ function GroupForm({
             maxLength={100}
           />
         </Field>
-        <fieldset className="form-fieldset profile-fieldset" disabled={busy}>
-          <legend>
-            破甲策略<span>{profiles.length} 个已选</span>
-          </legend>
-          <div
-            className="profile-search"
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && event.target instanceof HTMLInputElement)
-                event.preventDefault();
-            }}
-          >
-            <SearchInput
-              value={profileSearch}
-              onChange={setProfileSearch}
-              placeholder="搜索破甲策略"
-            />
-            <span className="profile-results" role="status">
-              显示 {visibleProfiles.length} / {state.profiles.length} 个策略
-            </span>
-          </div>
-          <div
-            className="profile-options"
-            role="region"
-            aria-label="破甲策略列表"
-            tabIndex={0}
-          >
-            {visibleProfiles.map((item) => {
-              const details = profileDetails.get(item.id);
-              return (
-                <div className="profile-option" key={item.id}>
-                  <label className="profile-choice">
-                    <input
-                      type="checkbox"
-                      checked={profiles.includes(item.id)}
-                      onChange={(event) => {
-                        const checked = event.target.checked;
-                        setProfiles((current) => {
-                          if (!checked)
-                            return current.filter((id) => id !== item.id);
-                          const overlapping = new Set(
-                            state.profiles
-                              .filter((profile) =>
-                                profile.models.some((model) =>
-                                  item.models.includes(model),
-                                ),
-                              )
-                              .map((profile) => profile.id),
-                          );
-                          return [
-                            ...current.filter((id) => !overlapping.has(id)),
-                            item.id,
-                          ];
-                        });
-                      }}
-                    />
-                    <span className="profile-checkbox" aria-hidden="true">
-                      <Check size={13} strokeWidth={2.5} />
-                    </span>
-                    <span className="profile-description">
-                      <strong>{profileDisplayModels(item).join(" · ")}</strong>
-                      {details && (
-                        <span className="profile-variant">{details.variant}</span>
-                      )}
-                    </span>
-                  </label>
-                  {details && (
-                    <div className="profile-metadata">
-                      {item.metadata?.validation === "unverified" && (
-                        <span className="profile-validation">未实测</span>
-                      )}
-                      <span title={`UTF-8 正文：${details.bytes} 字节`}>
-                        {(details.bytes / 1024).toFixed(1)} KiB
-                      </span>
-                      {item.metadata && (
-                        <a
-                          href={item.metadata.source_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={`来源版本：${item.metadata.source_revision}`}
-                          aria-label={`${item.models.join("、")} 策略来源，版本 ${item.metadata.source_revision}`}
-                        >
-                          <ExternalLink size={12} aria-hidden="true" />
-                          {item.metadata.source_revision.slice(0, 7)}
-                        </a>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            {visibleProfiles.length === 0 && (
-              <p className="profile-empty">
-                {state.profiles.length === 0
-                  ? "暂无可用的破甲策略"
-                  : "没有匹配的模型，试试其他关键词"}
-              </p>
-            )}
-          </div>
-          <div className="default-strategy-setting">
-            <Toggle
-              label="开启破甲默认策略"
-              checked={defaultStrategyEnabled}
-              onChange={setDefaultStrategyEnabled}
-              describedBy="default-strategy-description"
-            />
-            <p id="default-strategy-description" className="field-hint">
-              开启后，未勾选模型将采取默认提示词注入尝试进行破甲，如造成无法正常使用现象请关闭此选项。
-            </p>
-          </div>
-        </fieldset>
+        <Field label="简介" hint="可选；留空时不会显示">
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder="填写此分组的用途或说明"
+            rows={5}
+            maxLength={2000}
+            disabled={busy}
+          />
+        </Field>
       </ModalForm>
     </Modal>
   );
@@ -716,6 +553,8 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
                         variant={
                           !account.enabled
                             ? "neutral"
+                            : account.provider_binding && account.provider_binding.status !== "active"
+                              ? "red"
                             : (account.runtime?.cooldown_until || 0) >
                                 Date.now() / 1000
                               ? "amber"
@@ -725,6 +564,8 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
                       >
                         {!account.enabled
                           ? "已停用"
+                          : account.provider_binding && account.provider_binding.status !== "active"
+                            ? "绑定失效"
                           : (account.runtime?.cooldown_until || 0) >
                               Date.now() / 1000
                             ? "冷却中"
@@ -782,7 +623,11 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
           state={state}
           reload={reload}
           notify={notify}
-          onClose={() => setEditing(null)}
+          onClose={() => {
+            const refreshBinding = editing !== "new" && Boolean(editing.provider_binding);
+            setEditing(null);
+            if (refreshBinding) void reload().catch((failure) => notify(errorMessage(failure), true));
+          }}
         />
       )}
       {deleting && (
@@ -805,8 +650,15 @@ function AccountForm({
   notify,
   onClose,
 }: PageProps & { account?: Account; onClose: () => void }) {
+  const [importSource, setImportSource] = useState<"api" | "provider">(account?.provider_binding ? "provider" : "api");
+  const [providerBinding, setProviderBinding] = useState<ProviderBinding | null>(account?.provider_binding || null);
+  const [providerReady, setProviderReady] = useState(false);
+  const [providerLoading, setProviderLoading] = useState(false);
   const [name, setName] = useState(account?.name || "");
-  const [endpoint, setEndpoint] = useState(account?.endpoint || "");
+  const suggestedAccountName = useRef("");
+  const [apiEndpoint, setApiEndpoint] = useState(account?.endpoint || "");
+  const [providerEndpoint, setProviderEndpoint] = useState(account?.endpoint || "");
+  const endpoint = importSource === "provider" ? providerEndpoint : apiEndpoint;
   const [secret, setSecret] = useState("");
   const [proxyUrl, setProxyUrl] = useState("");
   const [proxyChanged, setProxyChanged] = useState(false);
@@ -836,11 +688,30 @@ function AccountForm({
   const [busy, setBusy] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [error, setError] = useState("");
+  const canReuseApiKey = Boolean(account?.has_api_key && !account.provider_binding);
+  const hasCredentials = importSource === "provider" ? providerReady && Boolean(providerBinding) : Boolean(secret.trim()) || canReuseApiKey;
+  const credentialsInput = importSource === "provider"
+    ? { provider_id: providerBinding?.provider_id, provider_key_id: providerBinding?.key_id }
+    : { api_key: secret, provider_id: null, provider_key_id: null };
+  const onProviderSelect = useCallback((selection: ProviderAccountSelection) => {
+    setProviderBinding(selection.binding);
+    setProviderEndpoint(selection.endpoint);
+    if (selection.replaceFields) {
+      const previousSuggestion = suggestedAccountName.current;
+      setName((current) => !current.trim() || current === previousSuggestion ? selection.accountName : current);
+      suggestedAccountName.current = selection.accountName;
+    }
+    setError("");
+  }, []);
+  function changeImportSource(source: "api" | "provider") {
+    if (source === importSource) return;
+    setImportSource(source); setProviderReady(false); setProviderLoading(false); setError("");
+  }
   useEffect(() => {
     proxyRevision.current += 1;
     setProxyResult(null);
     setProxyError("");
-  }, [proxyUrl, proxyChanged, endpoint, secret, protocols]);
+  }, [proxyUrl, proxyChanged, endpoint, secret, protocols, importSource, providerBinding?.provider_id, providerBinding?.key_id]);
   const proxyInput = proxyChanged || !account ? { proxy_url: proxyUrl.trim() } : {};
   const hasProxy = !!proxyUrl.trim() || (!!account?.has_proxy && !proxyChanged);
   async function testProxy() {
@@ -851,7 +722,7 @@ function AccountForm({
     try {
       const result = await api<ProxyTestResult>("/accounts/proxy-test", "POST", {
         endpoint: endpoint.trim(),
-        api_key: secret,
+        ...credentialsInput,
         protocols,
         ...proxyInput,
         ...(account ? { account_id: account.id } : {}),
@@ -886,7 +757,7 @@ function AccountForm({
         "POST",
         {
           endpoint,
-          api_key: secret,
+          ...credentialsInput,
           protocols,
           ...proxyInput,
           ...(account ? { account_id: account.id } : {}),
@@ -902,6 +773,14 @@ function AccountForm({
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (importSource === "provider" && (!providerReady || !providerBinding)) {
+      setError(providerLoading ? "服务提供商信息正在读取，请稍候" : "请选择可用的服务提供商 API 密钥，或刷新密钥后重试");
+      return;
+    }
+    if (importSource === "api" && !secret.trim() && !canReuseApiKey) {
+      setError(account?.provider_binding ? "切换为 API 导入后，请输入新的 API Key" : "请填写 API Key");
+      return;
+    }
     if (!protocols.length) {
       setError("至少选择一种协议");
       return;
@@ -939,7 +818,7 @@ function AccountForm({
         {
           name: name.trim(),
           endpoint: endpoint.trim(),
-          api_key: secret,
+          ...credentialsInput,
           protocols,
           models,
           model_mappings: modelMappings,
@@ -974,7 +853,12 @@ function AccountForm({
         busy={busy || discovering || testingProxy}
         error={error}
         submit={account ? "保存更改" : "添加账号"}
+        submitDisabled={importSource === "provider" && (!providerReady || providerLoading)}
       >
+        <div className="account-import-source" role="group" aria-label="账号导入方式">
+          <button type="button" aria-pressed={importSource === "api"} disabled={busy || discovering || testingProxy} onClick={() => changeImportSource("api")}><KeyRound size={16} />从 API 导入</button>
+          <button type="button" aria-pressed={importSource === "provider"} disabled={busy || discovering || testingProxy} onClick={() => changeImportSource("provider")}><Server size={16} />从服务商导入</button>
+        </div>
         <Field label="账号名称">
           <input
             autoFocus
@@ -985,28 +869,30 @@ function AccountForm({
             maxLength={100}
           />
         </Field>
+        {importSource === "provider" ? <ProviderAccountImport accountId={account?.provider_binding ? account.id : undefined} savedBinding={account?.provider_binding || null} initialBinding={providerBinding} disabled={busy || discovering || testingProxy} onSelect={onProviderSelect} onReadyChange={setProviderReady} onLoadingChange={setProviderLoading} /> : <>
         <Field label="上游端点">
           <input
             type="url"
             value={endpoint}
-            onChange={(event) => setEndpoint(event.target.value)}
+            onChange={(event) => setApiEndpoint(event.target.value)}
             placeholder="https://api.example.com/v1"
             required
             spellCheck={false}
           />
         </Field>
-        <Field label="API Key" hint={account ? "留空保留已有密钥" : undefined}>
+        <Field label="API Key" hint={canReuseApiKey ? "留空保留已有密钥" : account?.provider_binding ? "从服务商绑定切换后，请输入新的 API Key。" : undefined}>
           <input
             type="password"
             autoComplete="off"
             value={secret}
             onChange={(event) => setSecret(event.target.value)}
-            required={!account}
+            required={!canReuseApiKey}
             placeholder={
-              account?.has_api_key ? "已保存 · 输入新密钥可替换" : "sk-…"
+              canReuseApiKey ? "已保存 · 输入新密钥可替换" : "sk-…"
             }
           />
         </Field>
+        </>}
         <fieldset className="form-fieldset">
           <legend>支持协议</legend>
           <div className="protocol-options">
@@ -1044,7 +930,7 @@ function AccountForm({
               type="button"
               className="small-button"
               busy={discovering}
-              disabled={busy || testingProxy || !endpoint || (!secret && !account)}
+              disabled={busy || testingProxy || !endpoint || !hasCredentials}
               onClick={() => void discover()}
             >
               <RefreshCw size={14} />
@@ -1218,7 +1104,7 @@ function AccountForm({
             />
             <IconButton
               title="测试代理连接与延迟"
-              disabled={busy || discovering || testingProxy || !hasProxy || !endpoint.trim()}
+              disabled={busy || discovering || testingProxy || !hasProxy || !endpoint.trim() || !hasCredentials}
               aria-busy={testingProxy}
               onClick={() => void testProxy()}
             >
@@ -1250,7 +1136,7 @@ function AccountForm({
           </div>
         </div>
         <fieldset className="form-fieldset">
-          <legend>所属分组</legend>
+          <legend>{importSource === "provider" ? "本地路由分组" : "所属分组"}</legend>
           {state.groups.length ? (
             <div className="group-options">
               {state.groups.map((group) => (
@@ -1582,8 +1468,56 @@ function KeyForm({
     relayKey?.group_id || state.groups[0]?.id || "",
   );
   const [enabled, setEnabled] = useState(relayKey?.enabled ?? true);
+  const [profiles, setProfiles] = useState<string[]>(relayKey?.profile_ids || []);
+  const [defaultStrategyEnabled, setDefaultStrategyEnabled] = useState(
+    relayKey?.default_strategy_enabled ?? false,
+  );
+  const [profileSearch, setProfileSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const selectedGroup = state.groups.find((item) => item.id === group);
+  const supportedProfiles = useMemo(
+    () => profilesSupportedByGroup(group, state.accounts, state.profiles),
+    [group, state.accounts, state.profiles],
+  );
+  const supportedProfileIds = useMemo(
+    () => new Set(supportedProfiles.map((profile) => profile.id)),
+    [supportedProfiles],
+  );
+  const selectedProfiles = profiles.filter((id) => supportedProfileIds.has(id));
+  const visibleProfiles = useMemo(() => {
+    const query = profileSearch.trim().toLowerCase();
+    return [...supportedProfiles]
+      .sort(
+        (a, b) =>
+          modelNameOrder.compare(
+            profileDisplayModels(a).join(" · "),
+            profileDisplayModels(b).join(" · "),
+          ) ||
+          Number(Boolean(a.metadata)) - Number(Boolean(b.metadata)) ||
+          modelNameOrder.compare(a.id, b.id),
+      )
+      .filter((profile) =>
+        profile.models.some((model) => model.toLowerCase().includes(query)),
+      );
+  }, [supportedProfiles, profileSearch]);
+
+  useEffect(() => {
+    setProfiles((current) => {
+      const supported = current.filter((id) => supportedProfileIds.has(id));
+      return supported.length === current.length ? current : supported;
+    });
+  }, [supportedProfileIds]);
+
+  function selectGroup(groupId: string) {
+    const supported = new Set(
+      profilesSupportedByGroup(groupId, state.accounts, state.profiles).map((profile) => profile.id),
+    );
+    setProfiles((current) => current.filter((id) => supported.has(id)));
+    setGroup(groupId);
+    setProfileSearch("");
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!state.groups.some((item) => item.id === group)) {
@@ -1596,9 +1530,13 @@ function KeyForm({
       const result = await api<{ key?: string }>(
         relayKey ? `/keys/${relayKey.id}` : "/keys",
         relayKey ? "PUT" : "POST",
-        relayKey
-          ? { name: name.trim(), group_id: group, enabled }
-          : { name: name.trim(), group_id: group },
+        {
+          name: name.trim(),
+          group_id: group,
+          enabled,
+          profile_ids: selectedProfiles,
+          default_strategy_enabled: defaultStrategyEnabled,
+        },
       );
       await reload();
       onClose();
@@ -1615,6 +1553,7 @@ function KeyForm({
       title={relayKey ? "编辑密钥" : "创建 API 密钥"}
       onClose={onClose}
       busy={busy}
+      wide
     >
       <ModalForm
         onSubmit={submit}
@@ -1633,11 +1572,97 @@ function KeyForm({
             placeholder="例如：开发环境"
           />
         </Field>
-        <GroupSelect value={group} groups={state.groups} onChange={setGroup} disabled={busy} />
+        <div className="key-group-setting">
+          <GroupSelect value={group} groups={state.groups} onChange={selectGroup} disabled={busy} />
+          {selectedGroup?.description?.trim() && (
+            <p className="group-description" aria-label="分组简介">
+              {selectedGroup.description}
+            </p>
+          )}
+        </div>
         {!state.groups.length && <ErrorBox message="请先创建分组" />}
-        {relayKey && (
-          <Toggle checked={enabled} onChange={setEnabled} label="启用此密钥" />
-        )}
+        <fieldset className="form-fieldset profile-fieldset" disabled={busy || !selectedGroup}>
+          <legend>
+            破甲策略<span>{selectedProfiles.length} 个已选</span>
+          </legend>
+          <div
+            className="profile-search"
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && event.target instanceof HTMLInputElement)
+                event.preventDefault();
+            }}
+          >
+            <SearchInput
+              value={profileSearch}
+              onChange={setProfileSearch}
+              placeholder="搜索破甲策略"
+            />
+            <span className="profile-results" role="status">
+              显示 {visibleProfiles.length} / {supportedProfiles.length} 个策略
+            </span>
+          </div>
+          <div
+            className="profile-options"
+            role="region"
+            aria-label="破甲策略列表"
+            tabIndex={0}
+          >
+            {visibleProfiles.map((item) => (
+              <div className="profile-option" key={item.id}>
+                <label className="profile-choice">
+                  <input
+                    type="checkbox"
+                    checked={selectedProfiles.includes(item.id)}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setProfiles((current) => {
+                        if (!checked) return current.filter((id) => id !== item.id);
+                        const overlapping = new Set(
+                          state.profiles
+                            .filter((profile) =>
+                              profile.models.some((model) => item.models.includes(model)),
+                            )
+                            .map((profile) => profile.id),
+                        );
+                        return [
+                          ...current.filter((id) => supportedProfileIds.has(id) && !overlapping.has(id)),
+                          item.id,
+                        ];
+                      });
+                    }}
+                  />
+                  <span className="profile-checkbox" aria-hidden="true">
+                    <Check size={13} strokeWidth={2.5} />
+                  </span>
+                  <span className="profile-description">
+                    <strong>{profileDisplayModels(item).join(" · ")}</strong>
+                  </span>
+                </label>
+              </div>
+            ))}
+            {visibleProfiles.length === 0 && (
+              <p className="profile-empty">
+                {!selectedGroup
+                  ? "请先选择所属分组"
+                  : supportedProfiles.length === 0
+                    ? "此分组暂无支持的破甲策略"
+                    : "没有匹配的模型，试试其他关键词"}
+              </p>
+            )}
+          </div>
+          <div className="default-strategy-setting">
+            <Toggle
+              label="开启破甲默认策略"
+              checked={defaultStrategyEnabled}
+              onChange={setDefaultStrategyEnabled}
+              describedBy="default-strategy-description"
+            />
+            <p id="default-strategy-description" className="field-hint">
+              开启后，未勾选模型将采取默认提示词注入尝试进行破甲，如造成无法正常使用现象请关闭此选项。
+            </p>
+          </div>
+        </fieldset>
+        <Toggle checked={enabled} onChange={setEnabled} label="启用此密钥" />
       </ModalForm>
     </Modal>
   );

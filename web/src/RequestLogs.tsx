@@ -323,10 +323,12 @@ export function RequestLogs({
   revision,
   notify,
   state,
+  onLoadingChange,
 }: {
   revision: number;
   notify: Notice;
   state: State;
+  onLoadingChange?: (loading: boolean) => void;
 }) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<RequestLogPage | null>(null);
@@ -338,6 +340,7 @@ export function RequestLogs({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const requestSequence = useRef(0);
+  useEffect(() => { onLoadingChange?.(loading); }, [loading, onLoadingChange]);
   useEffect(() => {
     const sequence = ++requestSequence.current;
     setLoading(true);

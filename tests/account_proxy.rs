@@ -208,6 +208,92 @@ async fn save(state: &Shared, endpoint: &str, proxy_url: &str) -> Value {
 }
 
 #[tokio::test]
+async fn provider_key_proxy_test_and_discovery_use_server_owned_endpoint_and_secret() {
+    let (_dir, state) = fixture();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let captured = hits.clone();
+    let router = Router::new().fallback(move |request: Request<Body>| {
+        let hits = captured.clone();
+        async move {
+            let path = request.uri().path();
+            let headers = request.headers();
+            if path == "/v1/models" {
+                assert_eq!(headers["authorization"], "Bearer complete-provider-key");
+                hits.fetch_add(1, Ordering::SeqCst);
+                return Json(json!({"data":[{"id":"chosen"}]})).into_response();
+            }
+            assert_eq!(headers["authorization"], "Bearer provider-login-token");
+            assert_eq!(headers["new-api-user"], "7");
+            Json(match path {
+                "/api/token/" => json!({"success":true,"data":{"total":1,"items":[{"id":1,"name":"Route key","key":"masked-****","group":"vip","status":1,"unlimited_quota":true}]}}),
+                "/api/token/1/key" => {
+                    assert_eq!(request.method(), "POST");
+                    json!({"success":true,"data":{"key":"complete-provider-key"}})
+                },
+                "/api/user/self/groups" => json!({"success":true,"data":{"vip":{"ratio":0.75}}}),
+                "/api/pricing" => json!({"success":true,"data":[],"group_ratio":{"vip":0.75}}),
+                _ => json!({"success":false}),
+            }).into_response()
+        }
+    });
+    let (addr, _server) = serve(router).await;
+    let endpoint = format!("http://{addr}");
+    let proxy = socks(addr).await;
+    let (status, provider) = console(
+        &state,
+        "POST",
+        "/api/providers",
+        json!({
+            "name":"New provider","kind":"newapi","base_url":endpoint,"auth_mode":"token",
+            "user_id":"7","access_token":"provider-login-token"
+        }),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{provider}");
+    let provider_id = provider["id"].as_str().unwrap();
+    let input = json!({"provider_id":provider_id,"provider_key_id":"1","proxy_url":proxy.url(),"endpoint":"https://must-not-receive-key.invalid"});
+    let (status, test) = console(
+        &state,
+        "POST",
+        "/api/accounts/proxy-test",
+        input.clone(),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{test}");
+    assert_eq!(test["ok"], true);
+    assert!(!test.to_string().contains("complete-provider-key"));
+    let (status, discovery) =
+        console(&state, "POST", "/api/models/discover", input.clone(), true).await;
+    assert_eq!(status, StatusCode::OK, "{discovery}");
+    assert_eq!(discovery["models"], json!(["chosen"]));
+    let mut save_input = input;
+    save_input["name"] = json!("Imported");
+    save_input["models"] = json!(["chosen"]);
+    save_input["group_ids"] = json!(["group"]);
+    let (status, account) = console(&state, "POST", "/api/accounts", save_input, true).await;
+    assert_eq!(status, StatusCode::OK, "{account}");
+    let (status, test) = console(
+        &state,
+        "POST",
+        "/api/accounts/proxy-test",
+        json!({"account_id":account["id"],"endpoint":"https://must-not-receive-key.invalid"}),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{test}");
+    assert_eq!(test["ok"], true);
+    assert_eq!(hits.load(Ordering::SeqCst), 3);
+    let records = proxy.records.lock().unwrap();
+    assert_eq!(records.len(), 3);
+    for record in records.iter() {
+        assert_eq!(record.host, "127.0.0.1");
+        assert_eq!(record.port, addr.port());
+    }
+}
+
+#[tokio::test]
 async fn account_proxy_is_encrypted_hidden_preserved_and_cleared() {
     let (_dir, state) = fixture();
     let old: Account =

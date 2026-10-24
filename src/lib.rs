@@ -1,6 +1,8 @@
 pub mod api;
 pub mod network;
 pub mod profiles;
+pub mod provider_keys;
+pub mod providers;
 pub mod proxy;
 pub mod store;
 pub mod update;
@@ -39,6 +41,7 @@ pub struct App {
     pub proxy_clients: Mutex<HashMap<String, (String, reqwest::Client)>>,
     pub runtime: Mutex<HashMap<String, Runtime>>,
     pub login_attempts: Mutex<HashMap<String, (i64, u32)>>,
+    pub(crate) provider_preflights: Mutex<HashMap<String, (i64, providers::Provider)>>,
     pub web_dir: std::path::PathBuf,
 }
 pub type Shared = Arc<App>;
@@ -165,6 +168,10 @@ pub fn app(state: Shared) -> Router {
         .route("/api/accounts", get(api::accounts).post(api::save_account))
         .route("/api/accounts/proxy-test", post(api::test_proxy))
         .route(
+            "/api/accounts/{id}/provider-binding",
+            get(provider_keys::refresh_binding),
+        )
+        .route(
             "/api/accounts/{id}",
             put(api::save_account_id).delete(api::delete_account),
         )
@@ -174,6 +181,21 @@ pub fn app(state: Shared) -> Router {
             put(api::update_key).delete(api::delete_key),
         )
         .route("/api/keys/{id}/reveal", post(api::reveal_key))
+        .route(
+            "/api/providers",
+            get(providers::list).post(providers::create),
+        )
+        .route("/api/providers/test", post(providers::test))
+        .route(
+            "/api/providers/{id}",
+            put(providers::edit).delete(providers::delete),
+        )
+        .route("/api/providers/{id}/refresh", post(providers::refresh))
+        .route(
+            "/api/providers/{id}/keys",
+            get(provider_keys::list).post(provider_keys::create),
+        )
+        .route("/api/providers/{id}/groups", get(provider_keys::groups))
         .route("/api/settings", get(api::settings).put(api::save_settings))
         .route("/api/settings/turnstile-test", post(api::test_turnstile))
         .route("/api/password", post(api::password))
@@ -314,6 +336,7 @@ pub fn new_app(data_dir: &std::path::Path, web_dir: std::path::PathBuf) -> Resul
         runtime: Mutex::new(HashMap::new()),
         proxy_clients: Mutex::new(HashMap::new()),
         login_attempts: Mutex::new(HashMap::new()),
+        provider_preflights: Mutex::new(HashMap::new()),
         web_dir,
     }))
 }

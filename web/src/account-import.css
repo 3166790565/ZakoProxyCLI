@@ -1,0 +1,77 @@
+/* Account imports use the console's Sakura Pudding surfaces and controls. */
+.account-import-source { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; padding: 5px; margin: -3px 0 0; border: 1.5px solid var(--line); border-radius: var(--pill); background: var(--pink-50); }
+.account-import-source button { display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 44px; padding: 8px 12px; border: 1px solid transparent; border-radius: var(--pill); background: transparent; color: var(--muted); font-size: 13px; font-weight: 800; white-space: nowrap; }
+.account-import-source button[aria-pressed="true"] { border-color: var(--line-strong); background: var(--surface); color: var(--pink-700); box-shadow: var(--shadow-sm); }
+.account-import-source button:active:not(:disabled) { transform: scale(.98); }
+.account-provider-import { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.account-import-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.account-import-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.account-import-heading > span { display: flex; align-items: center; gap: 7px; color: var(--ink-soft); font-size: 13px; font-weight: 800; }
+.account-import-heading > span > svg { color: var(--pink-500); }
+.account-import-heading small { padding: 2px 7px; border-radius: var(--pill); background: var(--pink-100); color: var(--muted); font-size: 10px; }
+.account-provider-picker { min-width: 0; }
+.account-provider-trigger { display: flex; align-items: center; gap: 11px; width: 100%; min-width: 0; min-height: 66px; padding: 12px 15px; border: 1.5px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--pink-600); text-align: left; }
+.account-provider-trigger > span { flex: 1; min-width: 0; }
+.account-provider-trigger strong, .account-provider-option strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 13px; font-weight: 800; }
+.account-provider-trigger small, .account-provider-option small { display: block; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; font-weight: 600; }
+.account-provider-trigger.is-placeholder strong { color: var(--muted); }
+.account-provider-trigger.is-open { border-color: var(--pink-400); box-shadow: var(--ring); }
+.account-provider-trigger.is-open > svg:last-child { transform: rotate(180deg); }
+.account-provider-menu { position: fixed; inset: auto; margin: 0; padding: 7px; overflow: auto; overscroll-behavior: contain; border: 1.5px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-lg); font-family: var(--font-ui); }
+.account-provider-menu::backdrop { background: transparent; }
+.account-provider-menu-heading { display: flex; justify-content: space-between; gap: 12px; padding: 6px 10px 9px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.account-provider-menu-heading > span { font-weight: 600; }
+.account-provider-option { display: flex; align-items: center; gap: 10px; min-height: 66px; padding: 11px 10px; border-radius: var(--radius-sm); cursor: pointer; touch-action: manipulation; user-select: none; }
+.account-provider-option > span:first-of-type { flex: 1; min-width: 0; }
+.account-provider-option > svg { color: var(--pink-500); }
+.account-provider-option.is-active { background: var(--pink-50); }
+.account-provider-option[aria-selected="true"] { background: var(--pink-100); }
+.account-provider-option.is-unavailable { opacity: .6; cursor: not-allowed; }
+.account-provider-option > .badge { flex-shrink: 0; }
+.account-key-menu .account-provider-option { min-height: 72px; margin-top: 6px; border: 1.5px solid var(--line); }
+.account-key-menu .account-provider-option[aria-selected="true"] { border-color: var(--pink-400); }
+.account-key-menu .account-create-key-option { margin-top: 0; margin-bottom: 10px; border: 1.5px dashed var(--pink-300); background: var(--pink-50); }
+.account-create-key-option strong { color: var(--pink-700); }
+.account-create-key-option > svg { flex-shrink: 0; width: 34px; height: 34px; padding: 8px; border-radius: 12px; background: var(--surface); color: var(--pink-600); }
+.account-key-name-preview { display: flex; align-items: flex-start; gap: 12px; padding: 15px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--pink-50); color: var(--muted); font-size: 12px; }
+.account-key-name-preview > svg { flex-shrink: 0; color: var(--pink-500); }
+.account-key-name-preview > span { min-width: 0; }
+.account-key-name-preview strong { display: block; margin-top: 7px; color: var(--ink); font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.account-key-created { padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--pink-50); color: var(--ink-soft); }
+.account-key-created > svg { flex-shrink: 0; color: var(--pink-600); }
+.modal:has(.account-key-create-form) { overflow: hidden; }
+.modal[open]:has(.account-key-create-form) { display: flex; flex-direction: column; }
+.modal:has(.account-key-create-form) > .modal-header { position: relative; top: auto; flex-shrink: 0; }
+.account-key-create-form { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.account-key-create-form .modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.account-key-create-form .modal-footer { position: relative; bottom: auto; flex-shrink: 0; }
+.account-provider-kind { flex-shrink: 0; padding: 3px 6px; border-radius: var(--pill); background: var(--honey-50); color: var(--honey-700); font-size: 10px; font-weight: 700; white-space: nowrap; }
+.account-import-note { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; line-height: 1.65; color: var(--muted); }
+.account-import-note > svg { margin-top: 2px; }
+.account-import-note.is-error { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--rose-bg); color: var(--rose); }
+.account-import-synced { font-size: 10px; color: var(--muted); }
+.account-import-endpoint { display: flex; align-items: flex-start; gap: 7px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--pink-50); color: var(--muted); font-size: 11px; }
+.account-import-endpoint > svg { margin-top: 2px; color: var(--pink-500); }
+.account-import-endpoint > span { min-width: 0; }
+.account-import-endpoint code { display: block; margin-top: 4px; color: var(--ink-soft); font-size: 11px; overflow-wrap: anywhere; }
+.modal:has(.account-import-source) { overflow: hidden; }
+.modal[open]:has(.account-import-source) { display: flex; flex-direction: column; }
+.modal:has(.account-import-source) > .modal-header { position: relative; top: auto; flex-shrink: 0; }
+.modal:has(.account-import-source) > form { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.modal:has(.account-import-source) .modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.modal:has(.account-import-source) .modal-footer { position: relative; bottom: auto; flex-shrink: 0; }
+@media (hover: hover) and (pointer: fine) {
+  .account-provider-trigger:hover:not(:disabled) { border-color: var(--pink-300); }
+  .account-key-menu .account-provider-option:not(.is-unavailable):hover { border-color: var(--pink-300); }
+  .account-import-source button:hover:not(:disabled):not([aria-pressed="true"]) { color: var(--pink-700); }
+}
+@media (max-width: 650px) {
+  .account-import-source { gap: 3px; padding: 4px; }
+  .account-import-source button { gap: 6px; padding: 8px 7px; font-size: 12px; }
+  .account-provider-import { gap: 18px; }
+  .account-import-heading .button { min-height: 44px; }
+  .account-provider-trigger { min-height: 66px; padding: 12px; }
+  .account-provider-option { gap: 8px; padding: 11px 10px; }
+  .account-provider-option > .badge { font-size: 9px; padding-inline: 6px; }
+  .account-provider-kind { font-size: 9px; padding: 3px 5px; }
+}

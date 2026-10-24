@@ -29,6 +29,7 @@ fn fixture() -> (tempfile::TempDir, Shared) {
                 name: "All model profiles".into(),
                 profile_ids: Vec::new(),
                 default_strategy_enabled: false,
+                description: String::new(),
             });
             config.keys.push(ApiKey {
                 id: "multi-key".into(),
@@ -82,7 +83,7 @@ fn select_profiles(state: &Shared, ids: Vec<String>) {
     state
         .store
         .update(|config| {
-            config.groups[0].profile_ids = ids;
+            config.keys[0].profile_ids = ids;
             Ok(())
         })
         .unwrap();

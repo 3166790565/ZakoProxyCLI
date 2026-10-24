@@ -144,7 +144,9 @@ pub async fn models(State(state): State<Shared>, headers: HeaderMap) -> Response
     let models: BTreeSet<_> = config
         .accounts
         .iter()
-        .filter(|account| account.enabled && account.group_ids.contains(&group.id))
+        .filter(|account| {
+            account.enabled && account.provider_available() && account.group_ids.contains(&group.id)
+        })
         .flat_map(|account| {
             account
                 .models
@@ -489,6 +491,12 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
         Ok(value) => value,
         Err((status, message)) => return error(status, message),
     };
+    // Routing belongs to the group; instruction selection belongs only to this key.
+    let policy = Group {
+        profile_ids: key.profile_ids.clone(),
+        default_strategy_enabled: key.default_strategy_enabled,
+        ..Default::default()
+    };
     let model = body
         .get("model")
         .and_then(Value::as_str)
@@ -527,6 +535,7 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
         .iter()
         .filter(|account| {
             account.enabled
+                && account.provider_available()
                 && account.group_ids.contains(&group.id)
                 && account.protocols.iter().any(|item| item == protocol)
                 && account.actual_model(&model).is_some()
@@ -583,9 +592,9 @@ async fn forward(state: Shared, headers: HeaderMap, body: Value, protocol: &str)
         let mut upstream_body = body.clone();
         upstream_body["model"] = json!(actual_model);
         let instruction_result = match protocol {
-            "anthropic" => apply_system(&mut upstream_body, &group, actual_model),
-            "chat" => apply_chat_instruction(&mut upstream_body, &group, actual_model),
-            _ => apply_instruction(&mut upstream_body, &group, actual_model),
+            "anthropic" => apply_system(&mut upstream_body, &policy, actual_model),
+            "chat" => apply_chat_instruction(&mut upstream_body, &policy, actual_model),
+            _ => apply_instruction(&mut upstream_body, &policy, actual_model),
         };
         if let Err(message) = instruction_result {
             log.entry.status = 400;
@@ -1818,8 +1827,7 @@ mod tests {
         state
             .store
             .update(|config| {
-                config.groups[0].profile_ids =
-                    profiles::all().iter().map(|p| p.id.clone()).collect();
+                config.keys[0].profile_ids = profiles::all().iter().map(|p| p.id.clone()).collect();
                 for (account, actual) in config
                     .accounts
                     .iter_mut()

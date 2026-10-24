@@ -573,8 +573,21 @@ async fn discovery_handles_models_and_rejects_oversized_bodies() {
     task.abort();
 }
 
+async fn strategy_group(s: &Shared, cookie: &str, name: &str, models: Vec<String>) -> String {
+    let (status, group, _) =
+        request(s, "POST", "/api/groups", json!({"name":name}), cookie, "/").await;
+    assert_eq!(status, StatusCode::OK, "{group}");
+    let group_id = group["id"].as_str().unwrap().to_owned();
+    let (status, account, _) = request(s, "POST", "/api/accounts", json!({
+        "name":format!("{name} upstream"), "endpoint":"https://example.test", "api_key":"secret",
+        "models":models, "group_ids":[group_id]
+    }), cookie, "/").await;
+    assert_eq!(status, StatusCode::OK, "{account}");
+    group_id
+}
+
 #[tokio::test]
-async fn profile_selections_validate_edit_and_persist_across_restart() {
+async fn key_profile_selections_validate_edit_and_persist_across_restart() {
     let (dir, s) = fixture();
     let cookie = setup(&s).await;
     let (status, catalog, _) = request(&s, "GET", "/api/profiles", Value::Null, &cookie, "/").await;
@@ -597,6 +610,11 @@ async fn profile_selections_validate_edit_and_persist_across_restart() {
         }
     }
     let ids = nonoverlapping_profile_ids();
+    let models = profiles::all()
+        .iter()
+        .flat_map(|profile| profile.models.clone())
+        .collect();
+    let group_id = strategy_group(&s, &cookie, "All supported models", models).await;
     for invalid in [
         json!(["unknown-profile"]),
         Value::Null,
@@ -606,8 +624,8 @@ async fn profile_selections_validate_edit_and_persist_across_restart() {
         let (status, _, _) = request(
             &s,
             "POST",
-            "/api/groups",
-            json!({"name":"Invalid","profile_ids":invalid}),
+            "/api/keys",
+            json!({"name":"Invalid", "group_id":group_id, "profile_ids":invalid}),
             &cookie,
             "/",
         )
@@ -618,119 +636,149 @@ async fn profile_selections_validate_edit_and_persist_across_restart() {
     let (status, created, _) = request(
         &s,
         "POST",
-        "/api/groups",
-        json!({"name":"All models","profile_ids":duplicate_ids}),
+        "/api/keys",
+        json!({"name":"All models", "group_id":group_id, "profile_ids":duplicate_ids}),
         &cookie,
         "/",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{created}");
-    assert_eq!(created["profile_ids"], json!(ids));
-    let group_id = created["id"].as_str().unwrap();
-    let (status, unchanged, _) = request(
-        &s,
-        "PUT",
-        &format!("/api/groups/{group_id}"),
-        json!({"name":"Bad edit","profile_ids":["unknown-profile"]}),
-        &cookie,
-        "/",
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{unchanged}");
+    let key_id = created["id"].as_str().unwrap().to_owned();
+    assert_eq!(s.store.config().unwrap().keys[0].profile_ids, ids);
+    let key_path = format!("/api/keys/{key_id}");
+    let before = serde_json::to_value(&s.store.config().unwrap().keys[0]).unwrap();
+    for invalid in [
+        json!(["unknown-profile"]),
+        Value::Null,
+        json!([null]),
+        json!("not-an-array"),
+    ] {
+        let (status, rejected, _) = request(
+            &s,
+            "PUT",
+            &key_path,
+            json!({"name":"Bad edit", "group_id":group_id, "profile_ids":invalid}),
+            &cookie,
+            "/",
+        )
+        .await;
+        assert!(status.is_client_error(), "{status} {rejected}");
+        assert_eq!(
+            serde_json::to_value(&s.store.config().unwrap().keys[0]).unwrap(),
+            before
+        );
+    }
     let (status, updated, _) = request(
         &s,
         "PUT",
-        &format!("/api/groups/{group_id}"),
-        json!({"name":"Edited models","profile_ids":[ids[1],ids[2]]}),
+        &key_path,
+        json!({"name":"Edited models", "group_id":group_id, "profile_ids":[ids[1],ids[2]]}),
         &cookie,
         "/",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{updated}");
-    assert_eq!(updated["profile_ids"], json!([ids[1], ids[2]]));
     drop(s);
     let s = new_app(dir.path(), dir.path().join("web")).unwrap();
-    let (status, groups, _) = request(&s, "GET", "/api/groups", Value::Null, &cookie, "/").await;
+    let (status, keys, _) = request(&s, "GET", "/api/keys", Value::Null, &cookie, "/").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(groups.as_array().unwrap().len(), 1);
-    assert_eq!(groups[0]["id"], group_id);
-    assert_eq!(groups[0]["profile_ids"], json!([ids[1], ids[2]]));
+    assert_eq!(keys.as_array().unwrap().len(), 1);
+    assert_eq!(keys[0]["id"], key_id);
+    assert_eq!(keys[0]["profile_ids"], json!([ids[1], ids[2]]));
+    assert!(keys[0].get("secret").is_none());
+    assert!(keys[0].get("hash").is_none());
     let (status, cleared, _) = request(
         &s,
         "PUT",
-        &format!("/api/groups/{group_id}"),
-        json!({"name":"Disabled profiles","profile_ids":[]}),
+        &key_path,
+        json!({"name":"Disabled profiles", "group_id":group_id, "profile_ids":[]}),
         &cookie,
         "/",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{cleared}");
-    assert_eq!(cleared["profile_ids"], json!([]));
+    assert!(s.store.config().unwrap().keys[0].profile_ids.is_empty());
 }
 
 #[tokio::test]
-async fn overlapping_strategy_variants_are_rejected_without_mutating_groups() {
+async fn overlapping_strategy_variants_are_rejected_without_mutating_keys() {
     let (_dir, s) = fixture();
     let cookie = setup(&s).await;
+    let group_id = strategy_group(
+        &s,
+        &cookie,
+        "Variant models",
+        vec!["glm-5.3".into(), "grok-4.7".into()],
+    )
+    .await;
     for model in ["glm-5.3", "grok-4.7"] {
         let legacy = format!("coldcoffee-{model}-v1");
         let lightweight = format!("aijailbreak-{model}-v1");
-        let (status, created, _) = request(
-            &s,
-            "POST",
-            "/api/groups",
-            json!({"name":"Original", "profile_ids":[legacy, legacy], "default_strategy_enabled":true}),
-            &cookie,
-            "/",
-        )
-        .await;
+        let (status, created, _) = request(&s, "POST", "/api/keys", json!({
+            "name":"Original", "group_id":group_id, "profile_ids":[legacy,legacy], "default_strategy_enabled":true
+        }), &cookie, "/").await;
         assert_eq!(status, StatusCode::OK, "{created}");
-        assert_eq!(created["profile_ids"], json!([legacy]));
-        let path = format!("/api/groups/{}", created["id"].as_str().unwrap());
-        let (_, before, _) = request(&s, "GET", "/api/groups", Value::Null, &cookie, "/").await;
-        for (method, path) in [("POST", "/api/groups"), ("PUT", path.as_str())] {
-            let (status, rejected, _) = request(
-                &s,
-                method,
-                path,
-                json!({"name":"Rejected edit", "profile_ids":[legacy, lightweight], "default_strategy_enabled":false}),
-                &cookie,
-                "/",
-            )
-            .await;
+        let key_id = created["id"].as_str().unwrap();
+        let path = format!("/api/keys/{key_id}");
+        let (_, before, _) = request(&s, "GET", "/api/keys", Value::Null, &cookie, "/").await;
+        let key = before
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|key| key["id"] == key_id)
+            .unwrap();
+        assert_eq!(key["profile_ids"], json!([legacy]));
+        for (method, path) in [("POST", "/api/keys"), ("PUT", path.as_str())] {
+            let (status, rejected, _) = request(&s, method, path, json!({
+                "name":"Rejected edit", "group_id":group_id, "profile_ids":[legacy,lightweight], "default_strategy_enabled":false
+            }), &cookie, "/").await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected}");
             assert_eq!(
                 rejected["error"],
                 format!("Only one instruction profile may target model {model}")
             );
-            let (_, after, _) = request(&s, "GET", "/api/groups", Value::Null, &cookie, "/").await;
+            let (_, after, _) = request(&s, "GET", "/api/keys", Value::Null, &cookie, "/").await;
             assert_eq!(after, before);
         }
         let (status, switched, _) = request(
             &s,
             "PUT",
             &path,
-            json!({"name":"Lightweight", "profile_ids":[lightweight, lightweight]}),
+            json!({
+                "name":"Lightweight", "group_id":group_id, "profile_ids":[lightweight,lightweight]
+            }),
             &cookie,
             "/",
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{switched}");
-        assert_eq!(switched["profile_ids"], json!([lightweight]));
-        assert_eq!(switched["default_strategy_enabled"], true);
+        let config = s.store.config().unwrap();
+        let key = config.keys.iter().find(|key| key.id == key_id).unwrap();
+        assert_eq!(key.profile_ids, vec![lightweight]);
+        assert!(key.default_strategy_enabled);
     }
 }
 
 #[tokio::test]
-async fn old_groups_migrate_only_exact_presets_and_discard_custom_fields() {
+async fn old_groups_migrate_exact_presets_to_existing_keys_once_and_discard_custom_fields() {
     let (dir, s) = fixture();
     let cookie = setup(&s).await;
     let profile = &profiles::all()[1];
     let mut config = serde_json::to_value(s.store.config().unwrap()).unwrap();
+    config
+        .as_object_mut()
+        .unwrap()
+        .remove("key_strategy_schema");
     config["groups"] = json!([
-        {"id":"legacy-preset","name":"Old preset","models":profile.models,"instruction":profile.instruction},
+        {"id":"legacy-preset","name":"Old preset","models":profile.models,"instruction":profile.instruction,"default_strategy_enabled":true},
         {"id":"legacy-custom","name":"Custom","models":["custom-model"],"instruction":"Custom instruction"},
         {"id":"explicit-empty","name":"Already deselected","profile_ids":[],"models":profile.models,"instruction":profile.instruction}
+    ]);
+    config["keys"] = json!([
+        {"id":"preset-key","name":"Old key","group_id":"legacy-preset"},
+        {"id":"custom-key","name":"Custom key","group_id":"legacy-custom"},
+        {"id":"empty-key","name":"Deselected key","group_id":"explicit-empty"},
+        {"id":"explicit-key","name":"Explicitly off","group_id":"legacy-preset","profile_ids":[],"default_strategy_enabled":false}
     ]);
     let db = rusqlite::Connection::open(dir.path().join("zako.db")).unwrap();
     db.execute(
@@ -739,80 +787,106 @@ async fn old_groups_migrate_only_exact_presets_and_discard_custom_fields() {
     )
     .unwrap();
     drop(db);
-    let (status, groups, _) = request(&s, "GET", "/api/groups", Value::Null, &cookie, "/").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(groups[0]["profile_ids"], json!([profile.id]));
-    assert_eq!(groups[1]["profile_ids"], json!([]));
-    assert_eq!(groups[2]["profile_ids"], json!([]));
+    drop(s);
+    let s = new_app(dir.path(), dir.path().join("web")).unwrap();
+    let (_, keys, _) = request(&s, "GET", "/api/keys", Value::Null, &cookie, "/").await;
+    assert_eq!(keys[0]["profile_ids"], json!([profile.id]));
+    assert_eq!(keys[0]["default_strategy_enabled"], true);
+    assert_eq!(keys[1]["profile_ids"], json!([]));
+    assert_eq!(keys[2]["profile_ids"], json!([]));
+    assert_eq!(keys[3]["profile_ids"], json!([]));
+    assert_eq!(keys[3]["default_strategy_enabled"], false);
+    let (_, groups, _) = request(&s, "GET", "/api/groups", Value::Null, &cookie, "/").await;
     for group in groups.as_array().unwrap() {
-        assert!(group.get("models").is_none());
-        assert!(group.get("instruction").is_none());
+        for obsolete in [
+            "models",
+            "instruction",
+            "profile_ids",
+            "default_strategy_enabled",
+        ] {
+            assert!(group.get(obsolete).is_none(), "{group}");
+        }
+        assert_eq!(group["description"], "");
     }
-    let (status, cleared, _) = request(
+    let (status, fresh, _) = request(
         &s,
-        "PUT",
-        "/api/groups/legacy-preset",
-        json!({"name":"Deselected","profile_ids":[]}),
+        "POST",
+        "/api/keys",
+        json!({"name":"Fresh key", "group_id":"legacy-preset"}),
         &cookie,
         "/",
     )
     .await;
+    assert_eq!(status, StatusCode::OK, "{fresh}");
+    let config = s.store.config().unwrap();
+    let fresh = config
+        .keys
+        .iter()
+        .find(|key| key.id == fresh["id"])
+        .unwrap();
+    assert!(fresh.profile_ids.is_empty());
+    assert!(!fresh.default_strategy_enabled);
+    let (status, cleared, _) = request(&s, "PUT", "/api/keys/preset-key",
+        json!({"name":"Deselected", "group_id":"legacy-preset", "profile_ids":[], "default_strategy_enabled":false}), &cookie, "/").await;
     assert_eq!(status, StatusCode::OK, "{cleared}");
-    assert_eq!(cleared["profile_ids"], json!([]));
     drop(s);
     let s = new_app(dir.path(), dir.path().join("web")).unwrap();
-    assert!(s.store.config().unwrap().groups[0].profile_ids.is_empty());
-    assert!(s.store.config().unwrap().groups[1].profile_ids.is_empty());
-    assert!(s.store.config().unwrap().groups[2].profile_ids.is_empty());
+    assert!(s.store.config().unwrap().keys[0].profile_ids.is_empty());
+    assert!(!s.store.config().unwrap().keys[0].default_strategy_enabled);
+    assert!(s.store.config().unwrap().keys[3].profile_ids.is_empty());
+    assert!(!s.store.config().unwrap().keys[3].default_strategy_enabled);
     let db = rusqlite::Connection::open(dir.path().join("zako.db")).unwrap();
     let saved: String = db
         .query_row("SELECT value FROM config WHERE id=1", [], |row| row.get(0))
         .unwrap();
     let saved: Value = serde_json::from_str(&saved).unwrap();
     for group in saved["groups"].as_array().unwrap() {
-        assert!(group.get("models").is_none());
-        assert!(group.get("instruction").is_none());
+        for obsolete in [
+            "models",
+            "instruction",
+            "profile_ids",
+            "default_strategy_enabled",
+        ] {
+            assert!(group.get(obsolete).is_none(), "{group}");
+        }
     }
 }
 
 #[tokio::test]
-async fn explicit_empty_profiles_preserve_deselection_with_stale_legacy_fields() {
-    let (dir, s) = fixture();
+async fn group_api_legacy_fields_never_activate_new_key_policies() {
+    let (_dir, s) = fixture();
     let cookie = setup(&s).await;
-    for profile in profiles::all() {
-        let (status, legacy, _) = request(
-            &s,
-            "POST",
-            "/api/groups",
-            json!({"name":"Legacy client","models":profile.models,"instruction":profile.instruction}),
-            &cookie,
-            "/",
-        ).await;
-        assert_eq!(status, StatusCode::OK, "{legacy}");
-        assert_eq!(legacy["profile_ids"], json!([profile.id]));
-        let group_id = legacy["id"].as_str().unwrap();
-        let (status, cleared, _) = request(
-            &s,
-            "PUT",
-            &format!("/api/groups/{group_id}"),
-            json!({"name":"Explicit deselection","profile_ids":[],"models":profile.models,"instruction":profile.instruction}),
-            &cookie,
-            "/",
-        ).await;
-        assert_eq!(status, StatusCode::OK, "{cleared}");
-        assert_eq!(cleared["profile_ids"], json!([]));
-        assert!(cleared.get("models").is_none());
-        assert!(cleared.get("instruction").is_none());
-    }
-    drop(s);
-    let s = new_app(dir.path(), dir.path().join("web")).unwrap();
-    let (status, groups, _) = request(&s, "GET", "/api/groups", Value::Null, &cookie, "/").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(groups.as_array().unwrap().len(), profiles::all().len());
-    for (group, profile) in s.store.config().unwrap().groups.iter().zip(profiles::all()) {
-        assert!(group.profile_ids.is_empty());
-        assert!(profiles::instruction(group, &profile.models[0]).is_none());
-    }
+    let profile = &profiles::all()[0];
+    let (status, group, _) = request(
+        &s,
+        "POST",
+        "/api/groups",
+        json!({
+            "name":"Legacy client", "models":profile.models, "instruction":profile.instruction,
+            "profile_ids":[profile.id], "default_strategy_enabled":true
+        }),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{group}");
+    assert!(group.get("profile_ids").is_none());
+    assert!(group.get("default_strategy_enabled").is_none());
+    let (status, key, _) = request(
+        &s,
+        "POST",
+        "/api/keys",
+        json!({"name":"New key", "group_id":group["id"]}),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{key}");
+    let config = s.store.config().unwrap();
+    assert!(config.keys[0].profile_ids.is_empty());
+    assert!(!config.keys[0].default_strategy_enabled);
+    assert!(config.groups[0].profile_ids.is_empty());
+    assert!(!config.groups[0].default_strategy_enabled);
 }
 
 #[tokio::test]
@@ -833,8 +907,15 @@ async fn selected_profiles_route_both_protocols_without_cross_model_injection() 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let profile_ids = nonoverlapping_profile_ids();
-    let (status, group, _) = request(&s, "POST", "/api/groups", json!({"name":"Multi models","profile_ids":profile_ids,"models":["custom-model"],"instruction":"Custom fallback"}), &cookie, "/").await;
+    let (status, group, _) = request(
+        &s,
+        "POST",
+        "/api/groups",
+        json!({"name":"Multi models"}),
+        &cookie,
+        "/",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{group}");
     let gid = group["id"].as_str().unwrap();
     let models = [
@@ -851,16 +932,27 @@ async fn selected_profiles_route_both_protocols_without_cross_model_injection() 
     ];
     let (status, account, _) = request(&s, "POST", "/api/accounts", json!({"name":"Echo","endpoint":endpoint,"api_key":"upstream-secret","models":models,"group_ids":[gid]}), &cookie, "/").await;
     assert_eq!(status, StatusCode::OK, "{account}");
+    let profile_ids: Vec<_> = nonoverlapping_profile_ids()
+        .into_iter()
+        .filter(|id| {
+            profiles::find(id)
+                .unwrap()
+                .models
+                .iter()
+                .any(|model| models.contains(&model.as_str()))
+        })
+        .collect();
     let (status, key, _) = request(
         &s,
         "POST",
         "/api/keys",
-        json!({"name":"Integration","group_id":gid}),
+        json!({"name":"Integration","group_id":gid,"profile_ids":profile_ids}),
         &cookie,
         "/",
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{key}");
+    let key_id = key["id"].as_str().unwrap();
     let key = key["key"].as_str().unwrap();
     for path in ["/v1/responses", "/v1/responses/compact"] {
         for model in models {
@@ -893,8 +985,8 @@ async fn selected_profiles_route_both_protocols_without_cross_model_injection() 
     let (status, updated, _) = request(
         &s,
         "PUT",
-        &format!("/api/groups/{gid}"),
-        json!({"name":"Only 6","profile_ids":[six.id]}),
+        &format!("/api/keys/{key_id}"),
+        json!({"name":"Only 6","group_id":gid,"profile_ids":[six.id]}),
         &cookie,
         "/",
     )
@@ -1059,12 +1151,22 @@ async fn mapped_models_apply_actual_strategy_and_advertise_valid_aliases() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let ids = nonoverlapping_profile_ids();
+    let supported = ["gpt-5.6-sol", "gpt-6-astra", "gpt-6.1-sol", "plain"];
+    let ids: Vec<_> = nonoverlapping_profile_ids()
+        .into_iter()
+        .filter(|id| {
+            profiles::find(id)
+                .unwrap()
+                .models
+                .iter()
+                .any(|model| supported.contains(&model.as_str()))
+        })
+        .collect();
     let (status, group, _) = request(
         &s,
         "POST",
         "/api/groups",
-        json!({"name":"Mapped strategies", "profile_ids":ids}),
+        json!({"name":"Mapped strategies"}),
         &cookie,
         "/",
     )
@@ -1081,11 +1183,12 @@ async fn mapped_models_apply_actual_strategy_and_advertise_valid_aliases() {
         &s,
         "POST",
         "/api/keys",
-        json!({"name":"Mapped key", "group_id":gid}),
+        json!({"name":"Mapped key", "group_id":gid, "profile_ids":ids}),
         &cookie,
         "/",
     )
     .await;
+    let key_id = key["id"].as_str().unwrap();
     let key = key["key"].as_str().unwrap();
     for path in ["/v1/responses", "/v1/responses/compact"] {
         for (requested, actual) in [
@@ -1123,8 +1226,8 @@ async fn mapped_models_apply_actual_strategy_and_advertise_valid_aliases() {
         request(
             &s,
             "PUT",
-            &format!("/api/groups/{gid}"),
-            json!({"name":"Only six", "profile_ids":[six.id]}),
+            &format!("/api/keys/{key_id}"),
+            json!({"name":"Only six", "group_id":gid, "profile_ids":[six.id]}),
             &cookie,
             "/"
         )

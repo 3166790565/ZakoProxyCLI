@@ -487,10 +487,15 @@ pub async fn groups(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
 }
 #[derive(Deserialize)]
 pub struct GroupSaveInput {
-    #[serde(flatten)]
-    group: Group,
-    #[serde(default, deserialize_with = "explicit_default_strategy")]
-    default_strategy_enabled: Option<bool>,
+    name: String,
+    #[serde(default, deserialize_with = "explicit_description")]
+    description: Option<String>,
+}
+fn explicit_description<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Some)
 }
 fn explicit_default_strategy<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
 where
@@ -520,31 +525,17 @@ fn save_group_impl(
     input: GroupSaveInput,
 ) -> ApiResult<Value> {
     auth(s, h)?;
-    let mut g = input.group;
-    if let Some(enabled) = input.default_strategy_enabled {
-        g.default_strategy_enabled = enabled;
+    name(&input.name)?;
+    let description = input.description.as_deref().unwrap_or_default().trim();
+    if description.chars().count() > 2000 {
+        return Err(bad("Group description must not exceed 2000 characters"));
     }
-    name(&g.name)?;
-    let mut selected = std::collections::HashSet::new();
-    g.profile_ids.retain(|id| selected.insert(id.clone()));
-    if g.profile_ids.len() > profiles::all().len() {
-        return Err(bad("Group configuration is too large"));
-    }
-    if g.profile_ids.iter().any(|id| profiles::find(id).is_none()) {
-        return Err(bad("Unknown instruction profile"));
-    }
-    let mut models = std::collections::HashSet::new();
-    for profile in g.profile_ids.iter().filter_map(|id| profiles::find(id)) {
-        for model in &profile.models {
-            if !models.insert(model) {
-                return Err(bad(&format!(
-                    "Only one instruction profile may target model {model}"
-                )));
-            }
-        }
-    }
-    g.id = path.clone().unwrap_or_else(id);
-    g.name = g.name.trim().into();
+    let mut g = Group {
+        id: path.clone().unwrap_or_else(id),
+        name: input.name.trim().into(),
+        description: description.into(),
+        ..Default::default()
+    };
     s.store.update(|c| {
         if let Some(p) = path {
             let existing = c
@@ -552,8 +543,8 @@ fn save_group_impl(
                 .iter_mut()
                 .find(|x| x.id == p)
                 .ok_or("Group not found")?;
-            if input.default_strategy_enabled.is_none() {
-                g.default_strategy_enabled = existing.default_strategy_enabled;
+            if input.description.is_none() {
+                g.description = existing.description.clone();
             }
             *existing = g.clone();
         } else {
@@ -616,13 +607,15 @@ pub struct AccountInput {
     account: Account,
     #[serde(default)]
     proxy_url: Option<String>,
+    #[serde(flatten)]
+    provider_selection: crate::provider_keys::Selection,
 }
 pub async fn save_account(
     State(s): State<Shared>,
     h: HeaderMap,
     Json(a): Json<AccountInput>,
 ) -> ApiResult<Value> {
-    save_account_impl(&s, &h, None, a)
+    save_account_impl(&s, &h, None, a).await
 }
 pub async fn save_account_id(
     State(s): State<Shared>,
@@ -630,16 +623,51 @@ pub async fn save_account_id(
     Path(id): Path<String>,
     Json(a): Json<AccountInput>,
 ) -> ApiResult<Value> {
-    save_account_impl(&s, &h, Some(id), a)
+    save_account_impl(&s, &h, Some(id), a).await
 }
-fn save_account_impl(
+async fn save_account_impl(
     s: &Shared,
     h: &HeaderMap,
     path: Option<String>,
     input: AccountInput,
 ) -> ApiResult<Value> {
     auth(s, h)?;
+    let existing = path
+        .as_ref()
+        .map(|id| {
+            s.store
+                .config()?
+                .accounts
+                .into_iter()
+                .find(|a| &a.id == id)
+                .ok_or_else(|| bad("Account not found"))
+        })
+        .transpose()?;
     let mut a = input.account;
+    let input_has_api_key = !a.api_key.is_empty();
+    let mut provider_snapshot = None;
+    // Binding metadata is backend-owned and may not be forged through Account's flattened input.
+    a.provider_binding = None;
+    match input.provider_selection.choose(existing.as_ref())? {
+        crate::provider_keys::Choice::Provider {
+            provider_id,
+            key_id,
+        } => {
+            if !a.api_key.is_empty() {
+                return Err(bad("服务商绑定模式不能提交手填 API 密钥"));
+            }
+            let resolved = crate::provider_keys::resolve(s, &provider_id, &key_id).await?;
+            provider_snapshot = Some(resolved.snapshot);
+            a.endpoint = resolved.endpoint;
+            a.api_key = resolved.secret;
+            a.provider_binding = Some(resolved.binding);
+        }
+        crate::provider_keys::Choice::Api { detached } => {
+            if detached && a.api_key.is_empty() {
+                return Err(bad("解除服务商绑定后必须填写新的 API 密钥"));
+            }
+        }
+    }
     name(&a.name)?;
     crate::proxy::upstream_url(&a.endpoint, "models")?;
     if a.protocols.is_empty()
@@ -683,6 +711,14 @@ fn save_account_impl(
         a.proxy_url = s.store.seal(url.as_str())?;
     }
     s.store.update(|c| {
+        if let Some(snapshot) = provider_snapshot.as_ref()
+            && !c
+                .providers
+                .iter()
+                .any(|p| p.id == snapshot.id && crate::providers::same_connection(p, snapshot))
+        {
+            return Err("服务商已删除或站点已更改，请重新选择".into());
+        }
         if a.group_ids
             .iter()
             .any(|g| !c.groups.iter().any(|v| &v.id == g))
@@ -690,18 +726,29 @@ fn save_account_impl(
             return Err("Unknown group".into());
         }
         if let Some(p) = path {
-            let existing = c
+            let stored = c
                 .accounts
                 .iter_mut()
                 .find(|x| x.id == p)
                 .ok_or("Account not found")?;
+            // Resolving a provider key awaits remote requests. Do not let that
+            // older edit revive or replace a binding changed while it waited.
+            if existing.as_ref().is_some_and(|before| before != stored) {
+                return Err("账号已更改，请重新打开编辑后保存".into());
+            }
+            if stored.provider_binding.is_some()
+                && a.provider_binding.is_none()
+                && !input_has_api_key
+            {
+                return Err("解除服务商绑定后必须填写新的 API 密钥".into());
+            }
             if a.api_key.is_empty() {
-                a.api_key = existing.api_key.clone();
+                a.api_key = stored.api_key.clone();
             }
             if preserve_proxy {
-                a.proxy_url = existing.proxy_url.clone();
+                a.proxy_url = stored.proxy_url.clone();
             }
-            *existing = a.clone();
+            *stored = a.clone();
         } else {
             if a.api_key.is_empty() {
                 return Err("Upstream API key is required".into());
@@ -733,18 +780,78 @@ pub async fn keys(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
     let logs = s.store.logs(0, now())?;
     Ok(Json(Value::Array(c.keys.iter().map(|k|{
         let mut u=Usage::default();for l in logs.iter().filter(|l|l.key_id==k.id){u.input_tokens+=l.usage.input_tokens;u.output_tokens+=l.usage.output_tokens;u.cached_tokens+=l.usage.cached_tokens;u.cache_creation_input_tokens+=l.usage.cache_creation_input_tokens;u.cache_read_input_tokens+=l.usage.cache_read_input_tokens;}
-        json!({"id":k.id,"name":k.name,"group_id":k.group_id,"prefix":k.prefix,"enabled":k.enabled,"created_at":k.created_at,"usage":u})
+        json!({"id":k.id,"name":k.name,"group_id":k.group_id,"profile_ids":k.profile_ids,"default_strategy_enabled":k.default_strategy_enabled,"prefix":k.prefix,"enabled":k.enabled,"created_at":k.created_at,"usage":u})
     }).collect())))
 }
 #[derive(Deserialize)]
 pub struct KeyInput {
     name: String,
     group_id: String,
+    #[serde(default, deserialize_with = "explicit_key_profiles")]
+    profile_ids: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "explicit_default_strategy")]
+    default_strategy_enabled: Option<bool>,
     #[serde(default = "key_enabled")]
     enabled: bool,
 }
 fn key_enabled() -> bool {
     true
+}
+fn explicit_key_profiles<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<String>::deserialize(deserializer).map(Some)
+}
+fn key_profiles(
+    config: &Config,
+    group_id: &str,
+    mut selected: Vec<String>,
+    prune_unsupported: bool,
+) -> crate::store::Result<Vec<String>> {
+    if !config.groups.iter().any(|group| group.id == group_id) {
+        return Err("Unknown group".into());
+    }
+    let supported: std::collections::HashSet<_> = config
+        .accounts
+        .iter()
+        .filter(|account| {
+            account.enabled
+                && account.provider_available()
+                && account.group_ids.iter().any(|id| id == group_id)
+        })
+        .flat_map(|account| account.models.iter().map(String::as_str))
+        .collect();
+    let available = |id: &str| {
+        profiles::find(id).is_some_and(|profile| {
+            profile
+                .models
+                .iter()
+                .any(|model| supported.contains(model.as_str()))
+        })
+    };
+    if prune_unsupported {
+        selected.retain(|id| available(id));
+    }
+    let mut ids = std::collections::HashSet::new();
+    selected.retain(|id| ids.insert(id.clone()));
+    let mut models = std::collections::HashSet::new();
+    for id in &selected {
+        let profile = profiles::find(id).ok_or("Unknown instruction profile")?;
+        if !available(id) {
+            return Err(
+                "Instruction profile is not supported by this group's enabled accounts".into(),
+            );
+        }
+        for model in &profile.models {
+            if !models.insert(model) {
+                return Err(format!(
+                    "Only one instruction profile may target model {model}"
+                ));
+            }
+        }
+    }
+    Ok(selected)
 }
 pub async fn create_key(
     State(s): State<Shared>,
@@ -754,20 +861,20 @@ pub async fn create_key(
     auth(&s, &h)?;
     name(&input.name)?;
     let key = token("sk-zako-");
-    let k = ApiKey {
+    let mut k = ApiKey {
         id: id(),
         name: input.name,
         group_id: input.group_id,
+        profile_ids: input.profile_ids.unwrap_or_default(),
+        default_strategy_enabled: input.default_strategy_enabled.unwrap_or(false),
         hash: digest(&key),
         secret: s.store.seal(&key)?,
         prefix: format!("{}...{}", &key[..15], &key[key.len() - 4..]),
-        enabled: true,
+        enabled: input.enabled,
         created_at: now(),
     };
     s.store.update(|c| {
-        if !c.groups.iter().any(|g| g.id == k.group_id) {
-            return Err("Unknown group".into());
-        }
+        k.profile_ids = key_profiles(c, &k.group_id, k.profile_ids.clone(), false)?;
         c.keys.push(k.clone());
         Ok(())
     })?;
@@ -782,9 +889,20 @@ pub async fn update_key(
     auth(&s, &h)?;
     name(&input.name)?;
     s.store.update(|c| {
-        if !c.groups.iter().any(|g| g.id == input.group_id) {
-            return Err("Unknown group".into());
-        }
+        let existing = c
+            .keys
+            .iter()
+            .find(|key| key.id == id)
+            .ok_or("Key not found")?;
+        let selected = key_profiles(
+            c,
+            &input.group_id,
+            input
+                .profile_ids
+                .clone()
+                .unwrap_or_else(|| existing.profile_ids.clone()),
+            input.profile_ids.is_none(),
+        )?;
         let k = c
             .keys
             .iter_mut()
@@ -792,6 +910,10 @@ pub async fn update_key(
             .ok_or("Key not found")?;
         k.name = input.name;
         k.group_id = input.group_id;
+        k.profile_ids = selected;
+        if let Some(enabled) = input.default_strategy_enabled {
+            k.default_strategy_enabled = enabled;
+        }
         k.enabled = input.enabled;
         Ok(())
     })?;
@@ -978,6 +1100,7 @@ pub async fn password(
 }
 #[derive(Deserialize)]
 pub struct DiscoverInput {
+    #[serde(default)]
     endpoint: String,
     #[serde(default)]
     api_key: String,
@@ -987,6 +1110,8 @@ pub struct DiscoverInput {
     protocols: Option<Vec<String>>,
     #[serde(default)]
     proxy_url: Option<String>,
+    #[serde(flatten)]
+    provider_selection: crate::provider_keys::Selection,
 }
 pub async fn discover(
     State(s): State<Shared>,
@@ -994,7 +1119,6 @@ pub async fn discover(
     Json(input): Json<DiscoverInput>,
 ) -> ApiResult<Value> {
     auth(&s, &h)?;
-    let url = crate::proxy::upstream_url(&input.endpoint, "models")?;
     let account = if input.account_id.is_some() {
         let c = s.store.config()?;
         c.accounts
@@ -1005,16 +1129,18 @@ pub async fn discover(
     } else {
         None
     };
-    let key = if input.api_key.is_empty() {
-        s.store.unseal(
-            &account
-                .as_ref()
-                .ok_or_else(|| bad("API key is required"))?
-                .api_key,
-        )?
-    } else {
-        input.api_key
-    };
+    let (endpoint, key) = crate::provider_keys::connection(
+        &s,
+        &input.provider_selection,
+        account.as_ref(),
+        &input.endpoint,
+        &input.api_key,
+    )
+    .await?;
+    if key.is_empty() {
+        return Err(bad("API key is required"));
+    }
+    let url = crate::proxy::upstream_url(&endpoint, "models")?;
     let protocols = input
         .protocols
         .as_ref()
@@ -1090,6 +1216,8 @@ pub struct ProxyTestInput {
     api_key: String,
     #[serde(default)]
     protocols: Option<Vec<String>>,
+    #[serde(flatten)]
+    provider_selection: crate::provider_keys::Selection,
 }
 pub async fn test_proxy(
     State(s): State<Shared>,
@@ -1116,21 +1244,15 @@ pub async fn test_proxy(
         }
         _ => return Err(bad("A SOCKS proxy URL is required for testing")),
     };
-    let endpoint = input
-        .endpoint
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .or_else(|| account.map(|account| account.endpoint.as_str()))
-        .ok_or_else(|| bad("An upstream endpoint is required for testing"))?;
-    let url = crate::proxy::upstream_url(endpoint, "models")?;
-    let key = if input.api_key.is_empty() {
-        account
-            .map(|account| s.store.unseal(&account.api_key))
-            .transpose()?
-            .unwrap_or_default()
-    } else {
-        input.api_key
-    };
+    let (endpoint, key) = crate::provider_keys::connection(
+        &s,
+        &input.provider_selection,
+        account,
+        input.endpoint.as_deref().unwrap_or_default(),
+        &input.api_key,
+    )
+    .await?;
+    let url = crate::proxy::upstream_url(&endpoint, "models")?;
     if key.len() > 4096 {
         return Err(bad("API key is too large"));
     }

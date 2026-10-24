@@ -18,6 +18,7 @@ import {
   Menu,
   RefreshCw,
   Settings2,
+  Server,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -26,6 +27,7 @@ import type { State, Group, Account, RelayKey, Settings, Profile } from "./api";
 import { Button, ErrorBox, Field, IconButton, Toast } from "./components";
 import { Dashboard } from "./Dashboard";
 import { RequestLogs } from "./RequestLogs";
+import { ProvidersPage } from "./Providers";
 import { GroupsPage, AccountsPage, KeysPage } from "./Management";
 import { SettingsPage } from "./Settings";
 import { PromoBanner } from "./PromoBanner";
@@ -47,10 +49,12 @@ const navigation = [
   { id: "groups", label: "分组管理", icon: FolderClosed },
   { id: "accounts", label: "账号管理", icon: Database },
   { id: "keys", label: "密钥管理", icon: KeyRound },
+  { id: "providers", label: "服务提供商", icon: Server },
   { id: "logs", label: "调用日志", icon: FileClock },
   { id: "settings", label: "系统设置", icon: Settings2 },
 ] as const;
 type Page = (typeof navigation)[number]["id"];
+const independentlyLoadedPages: readonly Page[] = ["dashboard", "providers", "logs"];
 
 function Brand() {
   return (
@@ -240,6 +244,12 @@ export default function App() {
       ? (stored as Page)
       : "dashboard";
   });
+  const [pageLoading, setPageLoading] = useState(() => independentlyLoadedPages.includes(page));
+  const [pageError, setPageError] = useState("");
+  const [navigationId, setNavigationId] = useState(0);
+  const navigationSequence = useRef(0);
+  const currentPage = useRef(page);
+  const stateRequestSequence = useRef(0);
   const [mobileNav, setMobileNav] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -255,6 +265,7 @@ export default function App() {
     [],
   );
   const loadState = useCallback(async () => {
+    const request = ++stateRequestSequence.current;
     const [groups, accounts, keys, settings, profiles, bootstrap] =
       await Promise.all([
         api<Group[]>("/groups"),
@@ -264,6 +275,7 @@ export default function App() {
         api<Profile[]>("/profiles"),
         api<{ username: string; turnstile_site_key: string }>("/bootstrap"),
       ]);
+    if (request !== stateRequestSequence.current) return;
     setState({
       groups,
       accounts,
@@ -275,6 +287,29 @@ export default function App() {
     setTurnstileSiteKey(bootstrap.turnstile_site_key || "");
     setInitialized(true);
   }, []);
+  const reportPageLoading = useCallback((pending: boolean) => {
+    if (navigationId === navigationSequence.current && page === currentPage.current) {
+      setPageLoading(pending);
+    }
+  }, [navigationId, page]);
+  async function navigate(target: Page, retry = false) {
+    setMobileNav(false);
+    if (target === currentPage.current && !retry) return;
+    const request = ++navigationSequence.current;
+    currentPage.current = target;
+    setNavigationId(request);
+    setPage(target);
+    setPageError("");
+    setPageLoading(true);
+    if (independentlyLoadedPages.includes(target)) return;
+    try {
+      await loadState();
+    } catch (failure) {
+      if (request === navigationSequence.current) setPageError(errorMessage(failure));
+    } finally {
+      if (request === navigationSequence.current) setPageLoading(false);
+    }
+  }
   const boot = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -295,7 +330,13 @@ export default function App() {
   }, [loadState]);
   useEffect(() => {
     void boot();
-    const expired = () => setState(null);
+    const expired = () => {
+      stateRequestSequence.current += 1;
+      setNavigationId(++navigationSequence.current);
+      setPageLoading(independentlyLoadedPages.includes(currentPage.current));
+      setPageError("");
+      setState(null);
+    };
     window.addEventListener("session-expired", expired);
     return () => window.removeEventListener("session-expired", expired);
   }, [boot]);
@@ -339,6 +380,10 @@ export default function App() {
   async function logout() {
     try {
       await api("/logout", "POST");
+      stateRequestSequence.current += 1;
+      setNavigationId(++navigationSequence.current);
+      setPageLoading(independentlyLoadedPages.includes(currentPage.current));
+      setPageError("");
       setState(null);
     } catch (failure) {
       notify(errorMessage(failure), true);
@@ -409,10 +454,7 @@ export default function App() {
             <button
               key={item.id}
               className={`nav-item ${page === item.id ? "active" : ""}`}
-              onClick={() => {
-                setPage(item.id);
-                setMobileNav(false);
-              }}
+              onClick={() => void navigate(item.id)}
               aria-current={page === item.id ? "page" : undefined}
             >
               <item.icon size={19} strokeWidth={1.7} />
@@ -462,8 +504,7 @@ export default function App() {
                 title={`发现新版本 ${updateCheck.status.latest?.tag || ""}，前往系统更新`}
                 aria-label="有新版本，前往系统设置更新"
                 onClick={() => {
-                  setPage("settings");
-                  setMobileNav(false);
+                  void navigate("settings");
                   setUpdateFocusRequest((value) => value + 1);
                 }}
               >
@@ -480,7 +521,7 @@ export default function App() {
             <span className="topbar-divider" />
             <IconButton
               title="刷新数据"
-              disabled={refreshing}
+              disabled={refreshing || pageLoading}
               onClick={() => void refresh()}
             >
               <RefreshCw size={17} className={refreshing ? "spin" : ""} />
@@ -494,22 +535,41 @@ export default function App() {
           </div>
         </header>
         <main className="main-content">
+          {pageError && <div className="page-load-error" role="alert">
+            <ErrorBox message={`未能更新${activePage.label}：${pageError}`} />
+            <Button className="small-button" onClick={() => void navigate(page, true)}>
+              <RefreshCw size={15} />重新加载
+            </Button>
+          </div>}
+          {/* Keep page effects mounted so requests can finish while the content is hidden. */}
+          <div className="page-content" hidden={pageLoading} inert={pageLoading}>
           {page === "dashboard" && (
-            <Dashboard revision={revision} notify={notify} />
+            <Dashboard revision={revision} notify={notify} onLoadingChange={reportPageLoading} />
           )}
-          {page === "groups" && <GroupsPage {...props} />}
-          {page === "accounts" && <AccountsPage {...props} />}
-          {page === "keys" && <KeysPage {...props} />}
+          {page === "groups" && !pageLoading && <GroupsPage {...props} />}
+          {page === "accounts" && !pageLoading && <AccountsPage {...props} />}
+          {page === "keys" && !pageLoading && <KeysPage {...props} />}
+          {page === "providers" && (
+            <ProvidersPage revision={revision} notify={notify} onLoadingChange={reportPageLoading} />
+          )}
           {page === "logs" && (
-            <RequestLogs revision={revision} notify={notify} state={state} />
+            <RequestLogs revision={revision} notify={notify} state={state} onLoadingChange={reportPageLoading} />
           )}
-          {page === "settings" && (
+          {page === "settings" && !pageLoading && (
             <SettingsPage
               {...props}
               updateCheck={updateCheck}
               updateFocusRequest={updateFocusRequest}
             />
           )}
+          </div>
+          {pageLoading && <section className="page-loading-state" aria-label={`${activePage.label}加载中`}>
+            <div className="page-loading-card" role="status" aria-live="polite" aria-atomic="true">
+              <span className="page-loading-symbol" aria-hidden="true"><LoaderCircle className="spin page-loading-spinner" size={42} strokeWidth={1.6} /></span>
+              <strong>正在加载{activePage.label}</strong>
+              <span>正在获取最新数据，请稍候…</span>
+            </div>
+          </section>}
         </main>
         <footer className="workspace-footer">
           <span>ZAKO API RELAY</span>
