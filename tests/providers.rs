@@ -6,17 +6,29 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
+use std::net::SocketAddr;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicUsize, Ordering},
+};
+use tokio_rustls::{
+    TlsAcceptor,
+    rustls::{
+        self,
+        pki_types::{CertificateDer, PrivatePkcs8KeyDer},
+    },
 };
 use tower::ServiceExt;
 use zakoai_proxy::{Shared, app, new_app};
 
 struct Server(tokio::task::JoinHandle<()>);
 
+const OFFICIAL_UPSTREAM_KEY: &str = "sk-official-import-secret-9201";
+const OFFICIAL_URL: &str = "https://www.zayuapi.com";
+const OFFICIAL_CERTIFICATE: &[u8] = include_bytes!("fixtures/official-provider/cert.der");
+
 #[tokio::test]
-async fn official_provider_is_pinned_readonly_and_never_authenticates() {
+async fn official_provider_is_pinned_editable_and_requires_login_for_keys() {
     let (_dir, state) = fixture();
     let cookie = setup(&state).await;
     let official_id = "official-zayuai";
@@ -24,11 +36,13 @@ async fn official_provider_is_pinned_readonly_and_never_authenticates() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(initial[0]["id"], official_id);
     assert_eq!(initial[0]["name"], "杂鱼AI");
-    assert_eq!(initial[0]["base_url"], "https://st.zayuapi.com");
+    assert_eq!(initial[0]["base_url"], "https://www.zayuapi.com");
     assert_eq!(initial[0]["kind"], "sub2api");
-    for flag in ["official", "is_official", "readonly", "pinned"] {
+    assert_eq!(initial[0]["auth_mode"], "password");
+    for flag in ["official", "is_official", "pinned"] {
         assert_eq!(initial[0][flag], true);
     }
+    assert_eq!(initial[0]["readonly"], false);
     assert_eq!(initial[0]["status"], "not_authenticated");
     for field in [
         "balance",
@@ -52,33 +66,15 @@ async fn official_provider_is_pinned_readonly_and_never_authenticates() {
     let (_, listed, _) = request(&state, "GET", "/api/providers", Value::Null, &cookie).await;
     assert_eq!(listed[0], initial[0]);
     assert_eq!(listed[1]["id"], saved["id"]);
-    input["id"] = json!(official_id);
-    for (method, path, body) in [
-        (
-            "PUT",
-            format!("/api/providers/{official_id}"),
-            input.clone(),
-        ),
-        (
-            "DELETE",
-            format!("/api/providers/{official_id}"),
-            Value::Null,
-        ),
-        ("POST", "/api/providers/test".to_owned(), input),
-    ] {
-        let (status, body, _) = request(&state, method, &path, body, &cookie).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-    }
-    let (status, refreshed, _) = request(
+    let (status, rejected, _) = request(
         &state,
-        "POST",
-        &format!("/api/providers/{official_id}/refresh"),
+        "DELETE",
+        &format!("/api/providers/{official_id}"),
         Value::Null,
         &cookie,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{refreshed}");
-    assert_eq!(refreshed, initial[0]);
+    assert_eq!(status, StatusCode::FORBIDDEN, "{rejected}");
     for (method, suffix, body) in [
         ("GET", "keys", Value::Null),
         ("GET", "groups", Value::Null),
@@ -105,6 +101,374 @@ async fn official_provider_is_pinned_readonly_and_never_authenticates() {
     }
     assert!(mock.calls.lock().unwrap().is_empty());
     assert_eq!(state.store.config().unwrap().providers.len(), 1);
+}
+
+#[tokio::test]
+async fn official_provider_password_login_persists_refreshes_and_imports_keys() {
+    let (dir, mut state) = fixture();
+    let (address, mock, _server) = official_mock_server().await;
+    use_official_mock(&mut state, address);
+    let cookie = setup(&state).await;
+    let official_id = "official-zayuai";
+    let mut input = form(OFFICIAL_URL, "sub2api", "password");
+    input["name"] = json!("杂鱼AI");
+    input["username"] = json!("sub@example.com");
+    input["password"] = json!("sub-password-secret");
+    input["id"] = json!(official_id);
+    let (status, tested, _) = request(
+        &state,
+        "POST",
+        "/api/providers/test",
+        input.clone(),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tested}");
+    assert_eq!(tested["ok"], true);
+    assert_metrics(&tested, 12.5, 1.25, 7.5, 20.0);
+    assert_private(&tested);
+    assert!(state.store.config().unwrap().providers.is_empty());
+
+    let (status, saved, _) = request(
+        &state,
+        "PUT",
+        &format!("/api/providers/{official_id}"),
+        input.clone(),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["id"], official_id);
+    assert_eq!(saved["base_url"], OFFICIAL_URL);
+    assert_eq!(saved["has_password"], true);
+    assert_eq!(saved["readonly"], false);
+    for flag in ["official", "is_official", "pinned"] {
+        assert_eq!(saved[flag], true);
+    }
+    assert_private(&saved);
+    assert_eq!(state.store.config().unwrap().providers.len(), 1);
+    assert_private(&serde_json::to_value(state.store.config().unwrap()).unwrap());
+
+    let (status, refreshed, _) = request(
+        &state,
+        "POST",
+        &format!("/api/providers/{official_id}/refresh"),
+        Value::Null,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{refreshed}");
+    assert_eq!(refreshed["status"], "connected");
+    assert_metrics(&refreshed, 12.5, 1.25, 7.5, 20.0);
+    assert_private(&refreshed);
+    let (status, listed, _) = request(&state, "GET", "/api/providers", Value::Null, &cookie).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0], refreshed);
+
+    let (status, keys, _) = request(
+        &state,
+        "GET",
+        &format!("/api/providers/{official_id}/keys"),
+        Value::Null,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{keys}");
+    assert_eq!(keys["keys"][0]["id"], "1");
+    assert_eq!(keys["keys"][0]["available"], true);
+    assert_eq!(keys["keys"][0]["group_name"], "vip");
+    assert_private(&keys);
+    let (status, groups, _) = request(
+        &state,
+        "GET",
+        &format!("/api/providers/{official_id}/groups"),
+        Value::Null,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{groups}");
+    assert_eq!(groups["groups"][0]["id"], "7");
+
+    let (status, imported, _) = request(
+        &state,
+        "POST",
+        "/api/accounts",
+        json!({"name":"Official imported account","provider_id":official_id,"provider_key_id":"1",
+            "endpoint":"","api_key":"","models":["official-model"],"group_ids":[],"protocols":["responses"],"enabled":true}),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{imported}");
+    assert_eq!(imported["provider_binding"]["provider_id"], official_id);
+    assert_eq!(imported["provider_binding"]["status"], "active");
+    assert_eq!(imported["endpoint"], OFFICIAL_URL);
+    assert_private(&imported);
+    let account = state
+        .store
+        .config()
+        .unwrap()
+        .accounts
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(
+        state.store.unseal(&account.api_key).unwrap(),
+        OFFICIAL_UPSTREAM_KEY
+    );
+    assert_private(&serde_json::to_value(state.store.config().unwrap()).unwrap());
+    drop(state);
+
+    let mut reopened = new_app(dir.path(), dir.path().join("web")).unwrap();
+    use_official_mock(&mut reopened, address);
+    let (status, _, cookie) = request(
+        &reopened,
+        "POST",
+        "/api/login",
+        json!({"username":"admin","password":"integration-password-123"}),
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, listed, _) = request(&reopened, "GET", "/api/providers", Value::Null, &cookie).await;
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["id"], official_id);
+    assert_eq!(listed[0]["has_password"], true);
+    assert_eq!(listed[0]["status"], "connected");
+    assert_eq!(listed[0]["base_url"], OFFICIAL_URL);
+    assert_private(&listed);
+
+    input["password"] = json!("");
+    input["notes"] = json!("Edited after restart");
+    let (status, edited, _) = request(
+        &reopened,
+        "PUT",
+        &format!("/api/providers/{official_id}"),
+        input,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{edited}");
+    assert_eq!(edited["notes"], "Edited after restart");
+    assert_eq!(edited["has_password"], true);
+    let (status, refreshed, _) = request(
+        &reopened,
+        "POST",
+        &format!("/api/providers/{official_id}/refresh"),
+        Value::Null,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{refreshed}");
+    assert_eq!(refreshed["status"], "connected");
+    let (status, binding, _) = request(
+        &reopened,
+        "GET",
+        &format!("/api/accounts/{}/provider-binding", account.id),
+        Value::Null,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{binding}");
+    assert_eq!(binding["available"], true);
+    assert_private(&binding);
+    let (status, rejected, _) = request(
+        &reopened,
+        "DELETE",
+        &format!("/api/providers/{official_id}"),
+        Value::Null,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{rejected}");
+    assert_eq!(reopened.store.config().unwrap().providers.len(), 1);
+    assert!(
+        mock.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|call| call.path == "/api/v1/auth/login")
+    );
+}
+
+#[tokio::test]
+async fn official_name_and_url_cannot_be_changed_by_save_or_login_test() {
+    let (_dir, mut state) = fixture();
+    let (address, mock, _server) = official_mock_server().await;
+    use_official_mock(&mut state, address);
+    let cookie = setup(&state).await;
+    let mut input = form(OFFICIAL_URL, "sub2api", "password");
+    input["id"] = json!("official-zayuai");
+    input["name"] = json!("杂鱼AI");
+    input["username"] = json!("sub@example.com");
+    input["password"] = json!("sub-password-secret");
+    // Verify the same invariant before the first save and after configuration exists.
+    for saved in [false, true] {
+        if saved {
+            let (status, result, _) = request(
+                &state,
+                "PUT",
+                "/api/providers/official-zayuai",
+                input.clone(),
+                &cookie,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{result}");
+        }
+        let before = serde_json::to_value(state.store.config().unwrap()).unwrap();
+        let (_, initial_list, _) =
+            request(&state, "GET", "/api/providers", Value::Null, &cookie).await;
+        mock.calls.lock().unwrap().clear();
+        for (field, value) in [
+            ("name", "Renamed official provider"),
+            ("base_url", "https://st.zayuapi.com"),
+            ("base_url", "https://www.zayuapi.com.evil.invalid"),
+            ("base_url", "http://www.zayuapi.com"),
+            ("base_url", "https://www.zayuapi.com:444"),
+            ("base_url", "https://www.zayuapi.com/alternate"),
+        ] {
+            let mut changed = input.clone();
+            changed[field] = json!(value);
+            for (method, path) in [
+                ("PUT", "/api/providers/official-zayuai"),
+                ("POST", "/api/providers/test"),
+            ] {
+                let (status, result, _) =
+                    request(&state, method, path, changed.clone(), &cookie).await;
+                assert_eq!(
+                    status,
+                    StatusCode::BAD_REQUEST,
+                    "{method} {field}={value}: {result}"
+                );
+                assert!(
+                    result["error"].as_str().unwrap().contains("不可修改"),
+                    "{result}"
+                );
+                assert_eq!(
+                    serde_json::to_value(state.store.config().unwrap()).unwrap(),
+                    before
+                );
+                let (_, listed, _) =
+                    request(&state, "GET", "/api/providers", Value::Null, &cookie).await;
+                assert_eq!(listed, initial_list);
+                assert!(
+                    mock.calls.lock().unwrap().is_empty(),
+                    "rejected {field} contacted upstream"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn ordinary_provider_name_and_url_remain_editable() {
+    let (_dir, state) = fixture();
+    let cookie = setup(&state).await;
+    let (url, _mock, _server) = mock_server().await;
+    let (other_url, other_mock, _other_server) = mock_server().await;
+    let mut input = form(&url, "sub2api", "password");
+    input["username"] = json!("sub@example.com");
+    input["password"] = json!("sub-password-secret");
+    let original = create_and_refresh(&state, input.clone(), &cookie).await;
+    let id = original["id"].as_str().unwrap();
+    input["id"] = json!(id);
+    input["name"] = json!("Edited ordinary provider");
+    input["base_url"] = json!(other_url);
+    let (status, tested, _) = request(
+        &state,
+        "POST",
+        "/api/providers/test",
+        input.clone(),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tested}");
+    assert_eq!(tested["ok"], true);
+    let (status, edited, _) = request(
+        &state,
+        "PUT",
+        &format!("/api/providers/{id}"),
+        input,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{edited}");
+    assert_eq!(edited["name"], "Edited ordinary provider");
+    assert_eq!(edited["base_url"], other_url);
+    assert_eq!(edited["official"], false);
+    assert_private(&edited);
+    assert!(
+        other_mock
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|call| call.path == "/api/v1/auth/login")
+    );
+}
+
+struct TlsListener {
+    tcp: tokio::net::TcpListener,
+    acceptor: TlsAcceptor,
+}
+
+impl axum::serve::Listener for TlsListener {
+    type Io = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
+    type Addr = SocketAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            let (stream, address) = self.tcp.accept().await.unwrap();
+            if let Ok(Ok(stream)) = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                self.acceptor.accept(stream),
+            )
+            .await
+            {
+                return (stream, address);
+            }
+        }
+    }
+
+    fn local_addr(&self) -> std::io::Result<Self::Addr> {
+        self.tcp.local_addr()
+    }
+}
+
+async fn official_mock_server() -> (SocketAddr, Arc<Mock>, Server) {
+    let mock = Arc::new(Mock::default());
+    let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = tcp.local_addr().unwrap();
+    let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![CertificateDer::from(OFFICIAL_CERTIFICATE.to_vec())],
+        PrivatePkcs8KeyDer::from(include_bytes!("fixtures/official-provider/key.der").to_vec())
+            .into(),
+    )
+    .unwrap();
+    let listener = TlsListener {
+        tcp,
+        acceptor: TlsAcceptor::from(Arc::new(config)),
+    };
+    let router = Router::new().fallback(upstream).with_state(mock.clone());
+    let server = Server(tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    }));
+    (address, mock, server)
+}
+
+fn use_official_mock(state: &mut Shared, address: SocketAddr) {
+    Arc::get_mut(state).unwrap().client = reqwest::Client::builder()
+        .no_proxy()
+        .resolve("www.zayuapi.com", address)
+        .add_root_certificate(reqwest::Certificate::from_der(OFFICIAL_CERTIFICATE).unwrap())
+        .build()
+        .unwrap();
 }
 impl Drop for Server {
     fn drop(&mut self) {
@@ -242,8 +606,9 @@ async fn upstream(State(mock): State<Arc<Mock>>, req: Request<Body>) -> Response
         "/api/v1/usage/dashboard/stats" => {
             json!({"code":0,"data":{"today_actual_cost":1.25,"total_actual_cost":7.5}})
         }
-        "/api/v1/groups/available" => json!({"code":0,"data":[]}),
-        "/api/v1/groups/rates" => json!({"code":0,"data":{}}),
+        "/api/v1/keys" => json!({"code":0,"data":{"items":[{"id":1,"name":"Official key","key":OFFICIAL_UPSTREAM_KEY,"group_id":7,"group":{"id":7,"name":"vip","rate_multiplier":1.5},"status":"active","expires_at":null,"quota":0,"quota_used":0}],"total":1}}),
+        "/api/v1/groups/available" => json!({"code":0,"data":[{"id":7,"name":"vip","rate_multiplier":1.5}]}),
+        "/api/v1/groups/rates" => json!({"code":0,"data":{"7":1.5}}),
         _ => json!({"code":0,"data":{}}),
     })
     .into_response()
@@ -338,6 +703,7 @@ fn assert_private(value: &Value) {
         "rotated-refresh-secret",
         "rotated-access-secret",
         "upstream-cookie-secret",
+        OFFICIAL_UPSTREAM_KEY,
     ] {
         assert!(
             !text.contains(secret),

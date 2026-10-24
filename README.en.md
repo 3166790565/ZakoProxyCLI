@@ -4,7 +4,7 @@
 
 A self-hosted Rust Responses / Chat Completions / Anthropic Messages API relay with a responsive desktop/mobile administration console, SQLite persistence, and Docker Compose deployment. The console includes a dashboard, groups, upstream accounts, client API keys, service providers, request logs, and system settings.
 
-Current release: **v0.12.0**, with service-provider imports, upstream key creation and per-client-key instruction policies.
+Current release: **v0.12.1**, fixing official-provider credential editing and keeping its name and site URL fixed. Includes service-provider imports, upstream key creation and per-client-key instruction policies from **v0.12.0**.
 
 ## Relay Recommendation: 杂鱼 API
 
@@ -88,13 +88,19 @@ For example, the account configuration fragment `{"models":["gpt-6-astra"],"mode
 
 **Service providers** supports Sub2API and New API using the site's account/password or access-token authentication. Cards show balance, daily and total usage, and cumulative recharge. Missing values remain `—`, estimated recharge is labeled, and CNY presentation uses each provider's recharge multiplier. Credentials are encrypted at rest and omitted from public results.
 
-The built-in **杂鱼AI · 官方** Sub2API entry at `https://st.zayuapi.com` is pinned first and cannot be edited or deleted. It has no configured login credentials, displays a neutral statistics-unavailable state, and cannot currently read or create keys. Other saved providers can be edited, deleted and refreshed.
+The built-in **杂鱼AI · 官方** Sub2API entry uses the fixed URL `https://www.zayuapi.com` and is pinned first. Its name and site URL cannot be changed. Choose **Edit** on its card to enter your site account/password or access token, test the login and save. The configured entry can refresh statistics, read and create upstream keys, and import accounts; its configuration and encrypted credentials persist across restarts. Before configuration, it displays a neutral statistics-unavailable state. The official entry's credentials can be edited, but the entry cannot be deleted. Other saved providers can be edited, deleted and refreshed.
 
 In account creation, **From service provider** lists existing keys with their names, upstream group names, ratios and availability. Upstream groups are separate from local routing groups. The backend owns the bound endpoint and secret. Editing an imported account refreshes its binding; confirmed deleted, disabled, expired or exhausted keys stop participating in routing. A changed site or authentication identity requires explicit reselection; transient network errors preserve the last confirmed binding.
 
 Choose **Create from provider** at the top of the key list, then manually select an available group in the second dialog. **Create** sends the server-generated name `【ZakoAI】` followed by the original group name; **Cancel** sends no creation request. On success, the dialog closes and the list refreshes. The UI snapshots fresh key IDs immediately before creation and selects the unique new, available key matching the returned name and group, excluding old same-name keys. Refresh again if visibility is delayed; multiple matching new keys require manual selection. A failed response can follow a committed upstream write, so creation is never automatically retried: refresh and confirm first.
 
 Sub2API creates a key in the selected group. New API uses unlimited quota, no expiry, no model or IP restrictions and no cross-group retry; adjust restrictions at the upstream site if needed. These are upstream credentials, distinct from local client keys used to access this relay.
+
+### v0.12.1 Official Provider Login Fix
+
+- Edit the official provider’s account/password or tokens, test the login, save credentials and refresh statistics; saved configuration persists across restarts.
+- Keep the official name and `https://www.zayuapi.com` URL fixed in both the form and API. Other providers still allow name and URL changes.
+- Offer a clear login-configuration action before authentication; keep the official entry pinned and protected from deletion.
 
 ### v0.12.0 Service Providers And Per-Key Policies
 

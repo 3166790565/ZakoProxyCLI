@@ -26,8 +26,8 @@ fn official_provider() -> Provider {
         id: OFFICIAL_PROVIDER_ID.into(),
         name: "杂鱼AI".into(),
         kind: "sub2api".into(),
-        base_url: "https://st.zayuapi.com".into(),
-        auth_mode: "token".into(),
+        base_url: "https://www.zayuapi.com".into(),
+        auth_mode: "password".into(),
         username: String::new(),
         user_id: String::new(),
         password: String::new(),
@@ -48,11 +48,11 @@ fn official_provider() -> Provider {
     }
 }
 
-fn require_editable(provider_id: &str) -> Result<(), ApiError> {
+fn require_deletable(provider_id: &str) -> Result<(), ApiError> {
     if is_official(provider_id) {
         return Err(ApiError(
             StatusCode::FORBIDDEN,
-            "官方服务商为只读，不能修改、删除或测试替换登录信息".into(),
+            "官方预置服务商不能删除".into(),
         ));
     }
     Ok(())
@@ -64,7 +64,7 @@ pub(crate) fn require_authenticated(p: &Provider) -> Result<(), ApiError> {
     } else {
         p.access_token.is_empty() && p.refresh_token.is_empty()
     };
-    if is_official(&p.id) || missing {
+    if missing {
         return Err(ApiError(
             StatusCode::CONFLICT,
             "服务商尚未登录，请先完成站点登录后再读取或创建密钥".into(),
@@ -182,21 +182,20 @@ fn public(p: &Provider) -> Value {
         json!(!p.refresh_token.is_empty()),
     );
     let official = is_official(&p.id);
-    for field in ["official", "is_official", "readonly", "pinned"] {
+    for field in ["official", "is_official", "pinned"] {
         obj.insert(field.into(), json!(official));
     }
+    obj.insert("readonly".into(), json!(false));
     v
 }
 
 pub(crate) fn lookup(s: &Shared, provider_id: &str) -> Result<Provider, ApiError> {
-    if is_official(provider_id) {
-        return Ok(official_provider());
-    }
     s.store
         .config()?
         .providers
         .into_iter()
         .find(|p| p.id == provider_id)
+        .or_else(|| is_official(provider_id).then(official_provider))
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "服务商不存在".into()))
 }
 
@@ -228,6 +227,11 @@ fn build(s: &Shared, input: Input, existing: Option<&Provider>) -> Result<Provid
     }
     url.set_path(url.path().trim_end_matches('/').to_owned().as_str());
     let base_url = url.as_str().trim_end_matches('/').to_owned();
+    if existing.is_some_and(|p| is_official(&p.id))
+        && (input.name.trim() != "杂鱼AI" || base_url != "https://www.zayuapi.com")
+    {
+        return Err(bad("官方服务商名称和站点地址不可修改"));
+    }
     if !input.price_multiplier.is_finite()
         || input.price_multiplier <= 0.0
         || input.price_multiplier > 1_000_000.0
@@ -289,7 +293,10 @@ fn build(s: &Shared, input: Input, existing: Option<&Provider>) -> Result<Provid
         status: unverified(),
         last_error: None,
         last_synced_at: None,
-        created_at: existing.map(|p| p.created_at).unwrap_or_else(now),
+        created_at: existing
+            .map(|p| p.created_at)
+            .filter(|t| *t > 0)
+            .unwrap_or_else(now),
         updated_at: now(),
     };
     if p.token_type.is_empty() {
@@ -363,10 +370,16 @@ fn build(s: &Shared, input: Input, existing: Option<&Provider>) -> Result<Provid
 
 pub async fn list(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
     auth(&s, &h)?;
-    let mut providers = vec![public(&official_provider())];
+    let config = s.store.config()?;
+    let official = config
+        .providers
+        .iter()
+        .find(|p| is_official(&p.id))
+        .cloned()
+        .unwrap_or_else(official_provider);
+    let mut providers = vec![public(&official)];
     providers.extend(
-        s.store
-            .config()?
+        config
             .providers
             .iter()
             .filter(|p| !is_official(&p.id))
@@ -396,7 +409,6 @@ pub async fn edit(
     Json(input): Json<Input>,
 ) -> ApiResult<Value> {
     auth(&s, &h)?;
-    require_editable(&provider_id)?;
     let old = lookup(&s, &provider_id)?;
     let p = build(&s, input, Some(&old))?;
     let identity_changed = p.base_url != old.base_url
@@ -405,15 +417,16 @@ pub async fn edit(
         || p.username != old.username
         || (p.auth_mode == "token" && p.user_id != old.user_id);
     s.store.update(|c| {
-        let stored = c
-            .providers
-            .iter_mut()
-            .find(|p| p.id == provider_id)
-            .ok_or("服务商不存在")?;
-        if !same_connection(stored, &old) {
-            return Err("服务商登录信息已更改，请重新打开编辑".into());
+        if let Some(stored) = c.providers.iter_mut().find(|p| p.id == provider_id) {
+            if !same_connection(stored, &old) {
+                return Err("服务商登录信息已更改，请重新打开编辑".into());
+            }
+            *stored = p.clone();
+        } else if is_official(&provider_id) && old.created_at == 0 {
+            c.providers.push(p.clone());
+        } else {
+            return Err("服务商不存在".into());
         }
-        *stored = p.clone();
         if identity_changed {
             for account in &mut c.accounts {
                 if let Some(binding) = account
@@ -438,7 +451,7 @@ pub async fn delete(
     Path(provider_id): Path<String>,
 ) -> ApiResult<Value> {
     auth(&s, &h)?;
-    require_editable(&provider_id)?;
+    require_deletable(&provider_id)?;
     lookup(&s, &provider_id)?;
     s.store.update(|c| {
         c.providers.retain(|p| p.id != provider_id);
@@ -483,12 +496,6 @@ pub(crate) async fn request(
     headers: &HeaderMap,
     body: Option<Value>,
 ) -> Result<RemoteResponse, RemoteError> {
-    if is_official(&p.id) {
-        return Err(RemoteError {
-            message: "官方服务商尚未登录".into(),
-            unauthorized: true,
-        });
-    }
     let url = format!("{}{path}", p.base_url);
     let builder = if let Some(body) = body {
         s.client.post(&url).json(&body)
@@ -892,9 +899,7 @@ pub async fn refresh(
 ) -> Result<Response, ApiError> {
     auth(&s, &h)?;
     let before = lookup(&s, &provider_id)?;
-    if is_official(&provider_id) {
-        return Ok(Json(public(&before)).into_response());
-    }
+    require_authenticated(&before)?;
     let mut after = before.clone();
     match fetch(&s, &mut after).await {
         Ok(metrics) => {
@@ -918,9 +923,6 @@ pub async fn test(
     Json(input): Json<Input>,
 ) -> ApiResult<Value> {
     auth(&s, &h)?;
-    if let Some(provider_id) = input.id.as_deref() {
-        require_editable(provider_id)?;
-    }
     let existing = input
         .id
         .as_deref()

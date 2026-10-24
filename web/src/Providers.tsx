@@ -42,6 +42,11 @@ function normalizedSite(value: string) {
   catch { return value.trim().replace(/\/+$/, ""); }
 }
 
+function hasCredentials(provider: Provider) {
+  if (provider.auth_mode === "password") return Boolean(provider.username.trim() && provider.has_password);
+  return Boolean(provider.has_access_token || (provider.kind === "sub2api" && provider.has_refresh_token)) && (provider.kind !== "newapi" || Boolean(provider.user_id.trim()));
+}
+
 const platformFilters = [
   { value: "all", label: "全部平台" },
   { value: "sub2api", label: "Sub2API" },
@@ -178,9 +183,9 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
   }
   return <Modal title={provider ? "编辑服务提供商" : "添加服务提供商"} subtitle="连接站点，集中查看余额与使用情况" onClose={onClose} busy={Boolean(busy)} wide>
     <ModalForm onSubmit={submit} onClose={onClose} busy={Boolean(busy)} error={error} submit={provider ? "保存更改" : "登录并添加"}>
-      <Field label="站点名称"><input autoFocus value={values.name} onChange={(event) => update("name", event.target.value)} placeholder="例如：杂鱼AI" maxLength={100} required disabled={Boolean(busy)} /></Field>
+      <Field label="站点名称" hint={provider?.official ? "官方预置名称，不可修改" : undefined}><input autoFocus={!provider?.official} value={values.name} onChange={(event) => update("name", event.target.value)} placeholder="例如：杂鱼AI" maxLength={100} required disabled={Boolean(busy) || Boolean(provider?.official)} /></Field>
       <fieldset className="provider-platforms" disabled={Boolean(busy)}><legend>服务提供商平台</legend>{(["sub2api", "newapi"] as const).map((kind) => <button type="button" key={kind} className={`provider-platform ${values.kind === kind ? "selected" : ""}`} aria-pressed={values.kind === kind} onClick={() => update("kind", kind)}><span className={`provider-type-icon ${kind}`}><Server size={19} /></span><span><strong>{labels[kind]}</strong><small>{kind === "sub2api" ? "邮箱登录 · Access Token" : "账号登录 · 系统访问令牌"}</small></span>{values.kind === kind ? <CheckCircle2 size={18} /> : <ChevronRight size={17} />}</button>)}</fieldset>
-      <Field label="站点地址" hint="填写站点首页地址，不需要添加 /v1 或 /api。"><input type="url" value={values.base_url} onChange={(event) => update("base_url", event.target.value)} placeholder="https://api.zayuapi.com" required disabled={Boolean(busy)} autoComplete="url" /></Field>
+      <Field label="站点地址" hint={provider?.official ? "官方预置地址，不可修改" : "填写站点首页地址，不需要添加 /v1 或 /api。"}><input type="url" value={values.base_url} onChange={(event) => update("base_url", event.target.value)} placeholder="https://api.zayuapi.com" required disabled={Boolean(busy) || Boolean(provider?.official)} autoComplete="url" /></Field>
       <fieldset className="provider-auth-options" disabled={Boolean(busy)}><legend>认证方式</legend>{(["password", "token"] as const).map((mode) => <label key={mode} className={values.auth_mode === mode ? "selected" : ""}><input type="radio" name="provider-auth" value={mode} checked={values.auth_mode === mode} onChange={() => update("auth_mode", mode)} />{mode === "password" ? <ShieldCheck size={17} /> : <KeyRound size={17} />}<span>{mode === "password" ? "账号密码" : values.kind === "sub2api" ? "Sub2API 令牌" : "New API 用户 Key"}</span></label>)}</fieldset>
       {values.auth_mode === "password" ? <div className="form-grid provider-form-grid"><Field label={values.kind === "sub2api" ? "登录邮箱" : "登录账号"}><input value={values.username} onChange={(event) => update("username", event.target.value)} placeholder={values.kind === "sub2api" ? "name@example.com" : "请输入站点登录账号"} required disabled={Boolean(busy)} autoComplete="username" /></Field><Field label="登录密码" hint={canReuse && provider?.has_password ? "留空保留已保存的密码" : undefined}><SecretInput value={values.password} onChange={(value) => update("password", value)} placeholder={canReuse && provider?.has_password ? "已保存，留空保持不变" : "请输入登录密码"} required={!(canReuse && provider?.has_password)} disabled={Boolean(busy)} /></Field></div> : values.kind === "sub2api" ? <>
         <Field label="Access Token" hint="使用站点的登录访问令牌；也可仅填写 Refresh Token。"><SecretInput value={values.access_token} onChange={(value) => update("access_token", value)} placeholder={canReuse && provider?.has_access_token ? "已保存，留空保持不变" : "粘贴 Access Token"} disabled={Boolean(busy)} /></Field>
@@ -196,7 +201,7 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
 }
 
 function ProviderCard({ provider, busy, onRefresh, onEdit, onDelete }: { provider: Provider; busy: boolean; onRefresh: () => void; onEdit: () => void; onDelete: () => void }) {
-  const awaitingLogin = provider.official && provider.readonly;
+  const awaitingLogin = Boolean(provider.official && !hasCredentials(provider));
   const multiplier = provider.price_multiplier ?? 1;
   const metrics = [
     { label: "可用余额", value: provider.balance, icon: Wallet },
@@ -208,11 +213,11 @@ function ProviderCard({ provider, busy, onRefresh, onEdit, onDelete }: { provide
       <span className={`provider-type-icon ${provider.kind}`}><Server size={22} /></span>
       <div className="provider-identity"><div><h2>{provider.name}</h2>{provider.official && <span className="provider-official"><ShieldCheck size={12} />官方</span>}<Badge>{labels[provider.kind]}</Badge></div><a className="provider-site" href={provider.base_url} target="_blank" rel="noopener noreferrer" title={`打开 ${provider.name} 站点`}>{provider.base_url}<ExternalLink size={12} /></a></div>
       <Badge variant={provider.status === "connected" ? "green" : provider.status === "error" && !awaitingLogin ? "red" : "neutral"} dot>{awaitingLogin ? "未登录" : provider.status === "connected" ? "已连接" : provider.status === "error" ? "同步失败" : "待同步"}</Badge>
-      {!provider.readonly && <div className="provider-card-actions"><IconButton title={`编辑 ${provider.name}`} onClick={onEdit} disabled={busy}><Pencil size={16} /></IconButton><IconButton title={`删除 ${provider.name}`} onClick={onDelete} disabled={busy} className="destructive"><Trash2 size={16} /></IconButton></div>}
+      {(provider.official || !provider.readonly) && <div className="provider-card-actions"><IconButton title={`编辑 ${provider.name}`} onClick={onEdit} disabled={busy}><Pencil size={16} /></IconButton>{!provider.official && <IconButton title={`删除 ${provider.name}`} onClick={onDelete} disabled={busy} className="destructive"><Trash2 size={16} /></IconButton>}</div>}
     </div>
     <div className="provider-metrics">{metrics.map(({ label, value, icon: Icon, estimated }) => <div className="provider-metric" key={label}><span><Icon size={15} />{label}{estimated && <span className="provider-estimate" title="根据站点余额与累计消费估算">估算</span>}</span><strong title={value == null ? "站点尚未返回此数据" : `${value} USD × ${multiplier}`}>{estimated && value != null ? "≈ " : ""}{money(value == null ? null : value * multiplier, "CNY")}</strong><small>{money(value)} <span>USD</span></small></div>)}</div>
     {(provider.notes || provider.total_usage != null) && <div className="provider-card-details">{provider.notes && <p title={provider.notes}>{provider.notes}</p>}{provider.total_usage != null && <span>累计消费 <strong>{money(provider.total_usage)}</strong></span>}</div>}
-    {awaitingLogin && <div className="provider-login-state" role="status"><span><KeyRound size={19} /></span><div><strong>尚未登录，统计暂不可用</strong><p>此官方站点尚未配置登录凭据，暂时无法读取余额与用量。</p></div></div>}
+    {awaitingLogin && <div className="provider-login-state" role="status"><span><KeyRound size={19} /></span><div><strong>尚未登录，统计暂不可用</strong><p>配置站点登录凭据后，即可读取余额与用量。</p><p><Button className="small-button" onClick={onEdit} disabled={busy}><KeyRound size={14} />配置登录</Button></p></div></div>}
     {provider.status === "error" && !awaitingLogin && <div className="provider-sync-error" role="status"><AlertCircle size={15} /><span>{provider.last_error || "同步失败，请检查站点和登录凭据后重试。"}{provider.last_synced_at ? " · 当前保留上次成功获取的数据" : ""}</span></div>}
     <div className={`provider-card-footer${awaitingLogin ? " is-official" : ""}`}><span>{awaitingLogin ? <><ShieldCheck size={13} />官方预置 · 固定置顶</> : busy ? <><LoaderCircle size={13} className="spin" />正在同步站点…</> : <><span className={`provider-sync-dot ${provider.status}`} />{provider.last_synced_at ? `更新于 ${time(provider.last_synced_at)}` : "尚未获取统计数据"}</>}</span><div><a className="provider-visit" href={provider.base_url} target="_blank" rel="noopener noreferrer">登录站点<ArrowUpRight size={14} /></a>{!awaitingLogin && <Button className="small-button" busy={busy} onClick={onRefresh}>{!busy && <RefreshCw size={13} />}刷新</Button>}</div></div>
   </article>;
@@ -251,7 +256,7 @@ export function ProvidersPage({ revision = 0, notify, onLoadingChange }: { revis
   useEffect(() => { void reload(); return () => { requestId.current += 1; }; }, [revision, reload]);
   useEffect(() => { onLoadingChange?.(loading); }, [loading, onLoadingChange]);
   const filtered = useMemo(() => providers.filter((provider) => (filter === "all" || provider.kind === filter) && `${provider.name} ${provider.base_url} ${provider.username} ${provider.notes} ${labels[provider.kind]}`.toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))), [providers, search, filter]);
-  const refreshable = providers.filter((provider) => !provider.readonly);
+  const refreshable = providers.filter((provider) => !provider.readonly && (!provider.official || hasCredentials(provider)));
   const balances = providers.filter((provider) => provider.balance != null && Number.isFinite(provider.balance));
   const totalBalance = balances.length ? balances.reduce((sum, provider) => sum + (provider.balance || 0) * (provider.price_multiplier ?? 1), 0) : null;
   async function refresh(provider: Provider, silent = false) {
