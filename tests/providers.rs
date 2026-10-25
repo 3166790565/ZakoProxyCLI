@@ -321,6 +321,7 @@ async fn official_name_and_url_cannot_be_changed_by_save_or_login_test() {
         mock.calls.lock().unwrap().clear();
         for (field, value) in [
             ("name", "Renamed official provider"),
+            ("kind", "newapi"),
             ("base_url", "https://st.zayuapi.com"),
             ("base_url", "https://www.zayuapi.com.evil.invalid"),
             ("base_url", "http://www.zayuapi.com"),
@@ -488,6 +489,9 @@ struct Mock {
     calls: Mutex<Vec<Call>>,
     unavailable: AtomicBool,
     fail_stats: AtomicBool,
+    require_turnstile: AtomicBool,
+    omit_refresh_token: AtomicBool,
+    expire_login_access: AtomicBool,
     minimum_token: AtomicUsize,
     refreshes: AtomicUsize,
 }
@@ -559,7 +563,49 @@ async fn upstream(State(mock): State<Arc<Mock>>, req: Request<Body>) -> Response
             )
                 .into_response();
         }
-        return Json(json!({"code":0,"data":{"access_token":"password-access-secret","refresh_token":"initial-refresh-secret","token_type":"Bearer","expires_in":3600}})).into_response();
+        if mock.require_turnstile.load(Ordering::SeqCst)
+            && body["turnstile_token"] != "mock-turnstile-proof-never-persist"
+        {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"message":"turnstile verification required"})),
+            )
+                .into_response();
+        }
+        let access_token = if mock.require_turnstile.load(Ordering::SeqCst)
+            && mock.minimum_token.load(Ordering::SeqCst) > 0
+            && !mock.expire_login_access.load(Ordering::SeqCst)
+        {
+            format!(
+                "rotated-access-secret-{}",
+                mock.minimum_token.load(Ordering::SeqCst)
+            )
+        } else {
+            "password-access-secret".into()
+        };
+        let mut data = json!({
+            "access_token":access_token,
+            "token_type":"Bearer",
+            "expires_in":3600
+        });
+        if !mock.omit_refresh_token.load(Ordering::SeqCst) {
+            data["refresh_token"] = json!("initial-refresh-secret");
+        }
+        return Json(json!({"code":0,"data":data})).into_response();
+    }
+    if path == "/api/v1/settings/public" {
+        return Json(json!({
+            "code": 0,
+            "data": {
+                "turnstile_enabled": mock.require_turnstile.load(Ordering::SeqCst),
+                "turnstile_site_key": if mock.require_turnstile.load(Ordering::SeqCst) {
+                    "mock-site-key-public"
+                } else {
+                    ""
+                }
+            }
+        }))
+        .into_response();
     }
     if path == "/api/v1/auth/refresh" {
         let count = mock.refreshes.load(Ordering::SeqCst);
@@ -703,6 +749,8 @@ fn assert_private(value: &Value) {
         "rotated-refresh-secret",
         "rotated-access-secret",
         "upstream-cookie-secret",
+        "mock-turnstile-proof-never-persist",
+        "invalid-turnstile-proof-never-persist",
         OFFICIAL_UPSTREAM_KEY,
     ] {
         assert!(
@@ -892,6 +940,541 @@ async fn sub2api_password_uses_email_and_reports_fallback_recharge() {
         .unwrap();
     assert_eq!(login.body["email"], "sub@example.com");
     assert_eq!(login.body["password"], "sub-password-secret");
+}
+
+#[tokio::test]
+async fn migrated_sub2api_password_sessions_without_tokens_recover_without_turnstile() {
+    for previous_status in ["connected", "error"] {
+        for operation in ["refresh", "keys", "groups"] {
+            let (dir, state) = fixture();
+            let cookie = setup(&state).await;
+            let (url, mock, _server) = mock_server().await;
+            let mut input = form(&url, "sub2api", "password");
+            input["username"] = json!("sub@example.com");
+            input["password"] = json!("sub-password-secret");
+            let (status, tested, _) = request(
+                &state,
+                "POST",
+                "/api/providers/test",
+                input.clone(),
+                &cookie,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{tested}");
+            let (status, created, _) =
+                request(&state, "POST", "/api/providers", input, &cookie).await;
+            assert_eq!(status, StatusCode::OK, "{created}");
+            assert_eq!(created["has_access_token"], true);
+            let id = created["id"].as_str().unwrap().to_owned();
+
+            // v0.12.1 persisted password accounts without the login session.
+            state
+                .store
+                .update(|config| {
+                    let provider = config.providers.iter_mut().find(|p| p.id == id).unwrap();
+                    provider.access_token.clear();
+                    provider.refresh_token.clear();
+                    provider.status = previous_status.into();
+                    provider.last_error =
+                        (previous_status == "error").then(|| "previous refresh failed".into());
+                    Ok(())
+                })
+                .unwrap();
+            // Reopening also discards the successful preflight's in-memory cache.
+            drop(state);
+            let state = new_app(dir.path(), dir.path().join("web")).unwrap();
+            let saved = &state.store.config().unwrap().providers[0];
+            assert_eq!(saved.status, previous_status);
+            assert!(saved.access_token.is_empty());
+            assert!(saved.refresh_token.is_empty());
+            mock.calls.lock().unwrap().clear();
+
+            let (status, result, _) = request(
+                &state,
+                if operation == "refresh" {
+                    "POST"
+                } else {
+                    "GET"
+                },
+                &format!("/api/providers/{id}/{operation}"),
+                Value::Null,
+                &cookie,
+            )
+            .await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{previous_status}/{operation}: {result}"
+            );
+            if operation == "refresh" {
+                assert_eq!(result["status"], "connected");
+                assert_metrics(&result, 12.5, 1.25, 7.5, 20.0);
+            } else if operation == "keys" {
+                assert_eq!(result["keys"][0]["id"], "1");
+                assert_eq!(result["keys"][0]["available"], true);
+            } else {
+                assert_eq!(result["groups"][0]["id"], "7");
+            }
+            assert_private(&result);
+            assert_saved_sub_session(
+                &state,
+                &id,
+                "password-access-secret",
+                "initial-refresh-secret",
+            );
+            assert_eq!(mock.refreshes.load(Ordering::SeqCst), 0);
+            let calls = mock.calls.lock().unwrap();
+            let logins = calls
+                .iter()
+                .filter(|call| call.path == "/api/v1/auth/login")
+                .collect::<Vec<_>>();
+            assert_eq!(logins.len(), 1, "{previous_status}/{operation}");
+            assert!(logins[0].body.get("turnstile_token").is_none());
+            assert_eq!(calls[0].path, "/api/v1/settings/public");
+        }
+    }
+}
+
+fn assert_saved_sub_session(state: &Shared, id: &str, access: &str, refresh: &str) {
+    let config = state.store.config().unwrap();
+    let provider = config.providers.iter().find(|p| p.id == id).unwrap();
+    assert_eq!(
+        state.store.unseal(&provider.password).unwrap(),
+        "sub-password-secret"
+    );
+    assert_eq!(state.store.unseal(&provider.access_token).unwrap(), access);
+    assert_eq!(
+        state.store.unseal(&provider.refresh_token).unwrap(),
+        refresh
+    );
+    assert_private(&serde_json::to_value(config).unwrap());
+}
+
+async fn password_key_operations_preserve_rotations(require_turnstile: bool) {
+    let (_dir, state) = fixture();
+    let cookie = setup(&state).await;
+    let (url, mock, _server) = mock_server().await;
+    mock.require_turnstile
+        .store(require_turnstile, Ordering::SeqCst);
+    let mut input = form(&url, "sub2api", "password");
+    input["username"] = json!("sub@example.com");
+    input["password"] = json!("sub-password-secret");
+    if require_turnstile {
+        input["turnstile_token"] = json!("mock-turnstile-proof-never-persist");
+    }
+    let (status, tested, _) = request(
+        &state,
+        "POST",
+        "/api/providers/test",
+        input.clone(),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tested}");
+    assert_private(&tested);
+    let (status, created, _) = request(&state, "POST", "/api/providers", input, &cookie).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    assert_private(&created);
+    let id = created["id"].as_str().unwrap();
+    assert_saved_sub_session(
+        &state,
+        id,
+        "password-access-secret",
+        "initial-refresh-secret",
+    );
+
+    for (index, operation) in ["keys", "groups", "import"].into_iter().enumerate() {
+        let rotation = index + 1;
+        mock.minimum_token.store(rotation, Ordering::SeqCst);
+        let (method, path, body) = if operation == "import" {
+            (
+                "POST",
+                "/api/accounts".to_owned(),
+                json!({"name":"Rotated password account","provider_id":id,"provider_key_id":"1",
+                    "endpoint":"","api_key":"","models":["mock-model"],"group_ids":[],"protocols":["responses"],"enabled":true}),
+            )
+        } else {
+            (
+                "GET",
+                format!("/api/providers/{id}/{operation}"),
+                Value::Null,
+            )
+        };
+        let (status, result, _) = request(&state, method, &path, body, &cookie).await;
+        assert_eq!(status, StatusCode::OK, "{operation}: {result}");
+        assert_private(&result);
+        if operation == "keys" {
+            assert_eq!(result["keys"][0]["available"], true);
+        } else if operation == "groups" {
+            assert_eq!(result["groups"][0]["id"], "7");
+        } else {
+            assert_eq!(result["provider_binding"]["provider_id"], id);
+            assert_eq!(result["provider_binding"]["status"], "active");
+            let config = state.store.config().unwrap();
+            assert_eq!(config.accounts.len(), 1);
+            assert_eq!(
+                state.store.unseal(&config.accounts[0].api_key).unwrap(),
+                OFFICIAL_UPSTREAM_KEY
+            );
+        }
+        assert_eq!(
+            mock.refreshes.load(Ordering::SeqCst),
+            rotation,
+            "{operation}"
+        );
+        assert_saved_sub_session(
+            &state,
+            id,
+            &format!("rotated-access-secret-{rotation}"),
+            &format!("rotated-refresh-secret-{rotation}"),
+        );
+    }
+    let calls = mock.calls.lock().unwrap();
+    let logins = calls
+        .iter()
+        .filter(|call| call.path == "/api/v1/auth/login")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        logins.len(),
+        1,
+        "key operations must renew the preflight session"
+    );
+    if require_turnstile {
+        assert_eq!(
+            logins[0].body["turnstile_token"],
+            "mock-turnstile-proof-never-persist"
+        );
+    } else {
+        assert!(logins[0].body.get("turnstile_token").is_none());
+    }
+    let refreshes = calls
+        .iter()
+        .filter(|call| call.path == "/api/v1/auth/refresh")
+        .collect::<Vec<_>>();
+    assert_eq!(refreshes.len(), 3);
+    for (index, refresh) in refreshes.iter().enumerate() {
+        let expected = if index == 0 {
+            "initial-refresh-secret".to_owned()
+        } else {
+            format!("rotated-refresh-secret-{index}")
+        };
+        assert_eq!(refresh.body["refresh_token"], expected);
+        assert!(refresh.body.get("turnstile_token").is_none());
+        assert!(refresh.body.get("password").is_none());
+    }
+}
+
+#[tokio::test]
+async fn sub2api_turnstile_password_keys_groups_and_import_preserve_each_rotation() {
+    password_key_operations_preserve_rotations(true).await;
+}
+
+#[tokio::test]
+async fn sub2api_password_keys_groups_and_import_preserve_rotations_without_turnstile() {
+    password_key_operations_preserve_rotations(false).await;
+}
+
+#[tokio::test]
+async fn sub2api_auth_requirements_exposes_only_public_turnstile_configuration() {
+    let (_dir, state) = fixture();
+    let cookie = setup(&state).await;
+    let (url, mock, _server) = mock_server().await;
+    mock.require_turnstile.store(true, Ordering::SeqCst);
+    let mut input = form(&url, "sub2api", "token");
+    input["access_token"] = json!("direct-access-secret");
+    let (status, created, _) = request(&state, "POST", "/api/providers", input, &cookie).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let id = created["id"].as_str().unwrap();
+
+    let (status, requirements, _) = request(
+        &state,
+        "GET",
+        &format!("/api/providers/{id}/auth-requirements"),
+        Value::Null,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{requirements}");
+    assert_eq!(requirements["turnstile_required"], true);
+    assert_eq!(requirements["turnstile_site_key"], "mock-site-key-public");
+    assert_private(&requirements);
+    let (status, unsaved_requirements, _) = request(
+        &state,
+        "POST",
+        "/api/providers/auth-requirements",
+        json!({"kind":"sub2api","base_url":url}),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unsaved_requirements}");
+    assert_eq!(unsaved_requirements, requirements);
+    {
+        let calls = mock.calls.lock().unwrap();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.path == "/api/v1/settings/public")
+        );
+    }
+
+    let (status, newapi_requirements, _) = request(
+        &state,
+        "POST",
+        "/api/providers/auth-requirements",
+        json!({"kind":"newapi","base_url":"https://unused.example"}),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{newapi_requirements}");
+    assert_eq!(newapi_requirements["turnstile_required"], false);
+    assert_eq!(newapi_requirements["turnstile_site_key"], "");
+}
+
+#[tokio::test]
+async fn sub2api_password_forwards_turnstile_proof_and_keeps_it_ephemeral() {
+    const TURNSTILE_TOKEN: &str = "mock-turnstile-proof-never-persist";
+    let (_dir, state) = fixture();
+    let cookie = setup(&state).await;
+    let (url, mock, _server) = mock_server().await;
+    mock.require_turnstile.store(true, Ordering::SeqCst);
+    let mut input = form(&url, "sub2api", "password");
+    input["username"] = json!("sub@example.com");
+    input["password"] = json!("sub-password-secret");
+    input["turnstile_token"] = json!(TURNSTILE_TOKEN);
+
+    let (status, tested, _) = request(
+        &state,
+        "POST",
+        "/api/providers/test",
+        input.clone(),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tested}");
+    assert_eq!(tested["ok"], true);
+    assert_metrics(&tested, 12.5, 1.25, 7.5, 20.0);
+    assert_private(&tested);
+    assert!(!tested.to_string().contains(TURNSTILE_TOKEN));
+    assert!(state.store.config().unwrap().providers.is_empty());
+
+    let (status, created, _) =
+        request(&state, "POST", "/api/providers", input.clone(), &cookie).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    assert_eq!(created["has_access_token"], true);
+    assert_eq!(created["has_refresh_token"], true);
+    assert_private(&created);
+    assert!(!created.to_string().contains(TURNSTILE_TOKEN));
+    assert!(
+        !serde_json::to_value(state.store.config().unwrap())
+            .unwrap()
+            .to_string()
+            .contains(TURNSTILE_TOKEN)
+    );
+
+    let id = created["id"].as_str().unwrap();
+    let (status, refreshed, _) = request(
+        &state,
+        "POST",
+        &format!("/api/providers/{id}/refresh"),
+        Value::Null,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{refreshed}");
+    assert_eq!(refreshed["status"], "connected");
+    assert_private(&refreshed);
+
+    let calls = mock.calls.lock().unwrap();
+    let logins = calls
+        .iter()
+        .filter(|call| call.path == "/api/v1/auth/login")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        logins.len(),
+        1,
+        "password login should be reused after preflight"
+    );
+    assert_eq!(logins[0].body["turnstile_token"], TURNSTILE_TOKEN);
+}
+
+#[tokio::test]
+async fn rejected_turnstile_proofs_do_not_persist_tokens_or_plaintext_credentials() {
+    for proof in [None, Some("invalid-turnstile-proof-never-persist")] {
+        let (dir, state) = fixture();
+        let cookie = setup(&state).await;
+        let (url, mock, _server) = mock_server().await;
+        mock.require_turnstile.store(true, Ordering::SeqCst);
+        let mut input = form(&url, "sub2api", "password");
+        input["username"] = json!("sub@example.com");
+        input["password"] = json!("sub-password-secret");
+        if let Some(proof) = proof {
+            input["turnstile_token"] = json!(proof);
+        }
+        let before = serde_json::to_value(state.store.config().unwrap()).unwrap();
+        let (status, rejected, _) = request(
+            &state,
+            "POST",
+            "/api/providers/test",
+            input.clone(),
+            &cookie,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{rejected}");
+        if proof.is_none() {
+            assert!(rejected["error"].as_str().unwrap().contains("Turnstile"));
+        } else {
+            assert_eq!(rejected["error"], "站点认证失败，请检查登录信息或更新令牌");
+        }
+        assert_private(&rejected);
+        assert_eq!(
+            serde_json::to_value(state.store.config().unwrap()).unwrap(),
+            before
+        );
+
+        // Saving after a failed preflight must not reuse any staged session.
+        let (status, created, _) =
+            request(&state, "POST", "/api/providers", input.clone(), &cookie).await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        assert_eq!(created["has_password"], true);
+        assert_eq!(created["has_access_token"], false);
+        assert_eq!(created["has_refresh_token"], false);
+        assert_private(&created);
+        let id = created["id"].as_str().unwrap();
+        input["id"] = json!(id);
+        input["password"] = json!("");
+        let before = serde_json::to_value(state.store.config().unwrap()).unwrap();
+        assert_private(&before);
+        let (status, rejected, _) =
+            request(&state, "POST", "/api/providers/test", input, &cookie).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{rejected}");
+        assert_private(&rejected);
+        assert_eq!(
+            serde_json::to_value(state.store.config().unwrap()).unwrap(),
+            before
+        );
+        drop(state);
+        let reopened = new_app(dir.path(), dir.path().join("web")).unwrap();
+        let config = reopened.store.config().unwrap();
+        let saved = config.providers.iter().find(|p| p.id == id).unwrap();
+        assert!(saved.access_token.is_empty());
+        assert!(saved.refresh_token.is_empty());
+        assert_eq!(
+            reopened.store.unseal(&saved.password).unwrap(),
+            "sub-password-secret"
+        );
+        assert_private(&serde_json::to_value(config).unwrap());
+        assert_eq!(mock.refreshes.load(Ordering::SeqCst), 0);
+        let calls = mock.calls.lock().unwrap();
+        let logins = calls
+            .iter()
+            .filter(|call| call.path == "/api/v1/auth/login")
+            .collect::<Vec<_>>();
+        assert_eq!(logins.len(), if proof.is_some() { 2 } else { 0 });
+        for login in logins {
+            assert_eq!(login.body["turnstile_token"], proof.unwrap());
+        }
+    }
+}
+
+#[tokio::test]
+async fn turnstile_proof_is_not_replayed_when_new_login_access_is_rejected() {
+    let (_dir, state) = fixture();
+    let cookie = setup(&state).await;
+    let (url, mock, _server) = mock_server().await;
+    mock.require_turnstile.store(true, Ordering::SeqCst);
+    mock.omit_refresh_token.store(true, Ordering::SeqCst);
+    mock.expire_login_access.store(true, Ordering::SeqCst);
+    mock.minimum_token.store(1, Ordering::SeqCst);
+    let mut input = form(&url, "sub2api", "password");
+    input["username"] = json!("sub@example.com");
+    input["password"] = json!("sub-password-secret");
+    input["turnstile_token"] = json!("mock-turnstile-proof-never-persist");
+    let (status, rejected, _) =
+        request(&state, "POST", "/api/providers/test", input, &cookie).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{rejected}");
+    assert_eq!(rejected["error"], "站点认证失败，请检查登录信息或更新令牌");
+    assert_private(&rejected);
+    assert!(state.store.config().unwrap().providers.is_empty());
+    assert_eq!(mock.refreshes.load(Ordering::SeqCst), 0);
+    let calls = mock.calls.lock().unwrap();
+    let logins = calls
+        .iter()
+        .filter(|call| call.path == "/api/v1/auth/login")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        logins.len(),
+        1,
+        "a consumed proof must never authorize another login"
+    );
+    assert_eq!(
+        logins[0].body["turnstile_token"],
+        "mock-turnstile-proof-never-persist"
+    );
+}
+
+#[tokio::test]
+async fn expired_password_session_requires_new_turnstile_proof() {
+    const TURNSTILE_TOKEN: &str = "mock-turnstile-proof-never-persist";
+    let (_dir, state) = fixture();
+    let cookie = setup(&state).await;
+    let (url, mock, _server) = mock_server().await;
+    mock.require_turnstile.store(true, Ordering::SeqCst);
+    mock.omit_refresh_token.store(true, Ordering::SeqCst);
+    let mut input = form(&url, "sub2api", "password");
+    input["username"] = json!("sub@example.com");
+    input["password"] = json!("sub-password-secret");
+    input["turnstile_token"] = json!(TURNSTILE_TOKEN);
+    let (status, tested, _) = request(
+        &state,
+        "POST",
+        "/api/providers/test",
+        input.clone(),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tested}");
+    let (status, created, _) =
+        request(&state, "POST", "/api/providers", input.clone(), &cookie).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let id = created["id"].as_str().unwrap();
+
+    mock.minimum_token.store(1, Ordering::SeqCst);
+    let (status, expired, _) = request(
+        &state,
+        "POST",
+        &format!("/api/providers/{id}/refresh"),
+        Value::Null,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{expired}");
+    assert!(expired["error"].as_str().unwrap().contains("Turnstile"));
+    let logins_before_reauth = mock
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|call| call.path == "/api/v1/auth/login")
+        .count();
+    assert_eq!(
+        logins_before_reauth, 1,
+        "refresh must not retry password login without proof"
+    );
+
+    let (status, reauthenticated, _) =
+        request(&state, "POST", "/api/providers/test", input, &cookie).await;
+    assert_eq!(status, StatusCode::OK, "{reauthenticated}");
+    let logins_after_reauth = mock
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|call| call.path == "/api/v1/auth/login")
+        .count();
+    assert_eq!(
+        logins_after_reauth, 2,
+        "fresh proof should authorize one new login"
+    );
 }
 
 #[tokio::test]

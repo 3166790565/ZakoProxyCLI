@@ -167,6 +167,9 @@ pub struct Input {
     pub price_multiplier: f64,
     #[serde(default)]
     pub notes: String,
+    /// One-time proof forwarded only to an upstream Sub2API login request.
+    #[serde(default)]
+    pub turnstile_token: String,
 }
 
 fn public(p: &Provider) -> Value {
@@ -228,9 +231,11 @@ fn build(s: &Shared, input: Input, existing: Option<&Provider>) -> Result<Provid
     url.set_path(url.path().trim_end_matches('/').to_owned().as_str());
     let base_url = url.as_str().trim_end_matches('/').to_owned();
     if existing.is_some_and(|p| is_official(&p.id))
-        && (input.name.trim() != "杂鱼AI" || base_url != "https://www.zayuapi.com")
+        && (input.name.trim() != "杂鱼AI"
+            || base_url != "https://www.zayuapi.com"
+            || input.kind != "sub2api")
     {
-        return Err(bad("官方服务商名称和站点地址不可修改"));
+        return Err(bad("官方服务商名称、站点地址和平台类型不可修改"));
     }
     if !input.price_multiplier.is_finite()
         || input.price_multiplier <= 0.0
@@ -242,9 +247,14 @@ fn build(s: &Shared, input: Input, existing: Option<&Provider>) -> Result<Provid
     {
         return Err(bad("备注或账号信息过长"));
     }
-    if [&input.password, &input.access_token, &input.refresh_token]
-        .iter()
-        .any(|v| v.len() > 16384)
+    if [
+        &input.password,
+        &input.access_token,
+        &input.refresh_token,
+        &input.turnstile_token,
+    ]
+    .iter()
+    .any(|v| v.len() > 16384)
     {
         return Err(bad("认证凭据过长"));
     }
@@ -319,12 +329,17 @@ fn build(s: &Shared, input: Input, existing: Option<&Provider>) -> Result<Provid
     {
         return Err(bad("Token Type 格式无效"));
     }
+    // A newly entered password must perform a fresh upstream login. A blank
+    // password in an unchanged edit keeps the encrypted session established by
+    // the previous successful Turnstile preflight.
+    if p.auth_mode == "password" && !input.password.is_empty() {
+        p.access_token.clear();
+        p.refresh_token.clear();
+    }
     if p.auth_mode == "password" {
         if p.username.is_empty() || p.password.is_empty() {
             return Err(bad("请输入账号和密码；更换站点或认证方式后须重新输入凭据"));
         }
-        p.access_token.clear();
-        p.refresh_token.clear();
     } else {
         p.password.clear();
         if p.access_token.is_empty() && !(p.kind == "sub2api" && !p.refresh_token.is_empty()) {
@@ -353,7 +368,7 @@ fn build(s: &Shared, input: Input, existing: Option<&Provider>) -> Result<Provid
         p.last_synced_at = old.last_synced_at;
     }
     p.preflight_key = connection_key(s, &p).map_err(|error| bad(&error.message))?;
-    if p.kind == "sub2api" && p.auth_mode == "token" {
+    if p.kind == "sub2api" {
         let mut cached = s
             .provider_preflights
             .lock()
@@ -386,6 +401,100 @@ pub async fn list(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
             .map(public),
     );
     Ok(Json(Value::Array(providers)))
+}
+
+/// Read only the upstream's public CAPTCHA configuration. The site key is
+/// public configuration; no upstream secret or user credential is returned.
+#[derive(Deserialize)]
+pub struct AuthRequirementsInput {
+    pub kind: String,
+    pub base_url: String,
+}
+
+fn probe_provider(kind: &str, base_url: &str) -> Result<Provider, ApiError> {
+    if !["sub2api", "newapi"].contains(&kind) {
+        return Err(bad("不支持的服务商类型"));
+    }
+    if base_url.trim().len() > 2048 {
+        return Err(bad("站点地址过长"));
+    }
+    let mut url = reqwest::Url::parse(base_url.trim())
+        .map_err(|_| bad("请输入有效的 HTTP 或 HTTPS 站点地址"))?;
+    if !["http", "https"].contains(&url.scheme())
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(bad(
+            "站点地址仅支持 HTTP/HTTPS，不能包含凭据、查询参数或片段",
+        ));
+    }
+    url.set_path(url.path().trim_end_matches('/').to_owned().as_str());
+    let mut provider = official_provider();
+    provider.id = "auth-requirements-probe".into();
+    provider.kind = kind.into();
+    provider.base_url = url.as_str().trim_end_matches('/').to_owned();
+    Ok(provider)
+}
+
+async fn read_auth_requirements(s: &Shared, provider: &Provider) -> Result<Value, ApiError> {
+    if provider.kind != "sub2api" {
+        return Ok(json!({
+            "turnstile_required": false,
+            "turnstile_site_key": ""
+        }));
+    }
+    let response = request(
+        s,
+        provider,
+        "/api/v1/settings/public",
+        &HeaderMap::new(),
+        None,
+    )
+    .await
+    .map_err(|error| ApiError(StatusCode::BAD_GATEWAY, error.message))?;
+    let enabled = response
+        .data
+        .get("turnstile_enabled")
+        .and_then(|value| {
+            value
+                .as_bool()
+                .or_else(|| value.as_str().and_then(|value| value.parse::<bool>().ok()))
+        })
+        .unwrap_or(false);
+    let site_key = response
+        .data
+        .get("turnstile_site_key")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    Ok(json!({
+        "turnstile_required": enabled,
+        "turnstile_site_key": site_key,
+    }))
+}
+
+pub async fn auth_requirements(
+    State(s): State<Shared>,
+    h: HeaderMap,
+    Path(provider_id): Path<String>,
+) -> ApiResult<Value> {
+    auth(&s, &h)?;
+    let provider = lookup(&s, &provider_id)?;
+    Ok(Json(read_auth_requirements(&s, &provider).await?))
+}
+
+pub async fn auth_requirements_input(
+    State(s): State<Shared>,
+    h: HeaderMap,
+    Json(input): Json<AuthRequirementsInput>,
+) -> ApiResult<Value> {
+    auth(&s, &h)?;
+    let provider = probe_provider(&input.kind, &input.base_url)?;
+    Ok(Json(read_auth_requirements(&s, &provider).await?))
 }
 
 pub async fn create(
@@ -678,27 +787,75 @@ async fn sub_metrics(
     })
 }
 
-async fn fetch_sub(s: &Shared, p: &mut Provider) -> Result<Metrics, RemoteError> {
+pub(crate) async fn sub_password_login(
+    s: &Shared,
+    p: &mut Provider,
+    turnstile_token: Option<&str>,
+) -> Result<String, RemoteError> {
+    if turnstile_token.is_none_or(|token| token.trim().is_empty()) {
+        let requirements = read_auth_requirements(s, p)
+            .await
+            .map_err(|error| RemoteError {
+                message: error.1,
+                unauthorized: false,
+            })?;
+        if requirements["turnstile_required"] == true {
+            return Err(RemoteError {
+                message: "请在服务商管理中完成 Cloudflare Turnstile 验证后重新测试登录".into(),
+                unauthorized: true,
+            });
+        }
+    }
+    let password = decrypt(s, &p.password)?;
+    let mut body = json!({"email":p.username,"password":password});
+    if let Some(token) = turnstile_token.filter(|token| !token.trim().is_empty()) {
+        body["turnstile_token"] = json!(token);
+    }
+    let login = request(s, p, "/api/v1/auth/login", &HeaderMap::new(), Some(body)).await?;
+    let access = text(&login.data, &["access_token", "accessToken"])
+        .ok_or_else(|| RemoteError::invalid("/api/v1/auth/login"))?;
+    p.access_token = save_token(s, &access)?;
+    if let Some(refresh) = text(&login.data, &["refresh_token", "refreshToken"]) {
+        p.refresh_token = save_token(s, &refresh)?;
+    } else {
+        p.refresh_token.clear();
+    }
+    if let Some(kind) = text(&login.data, &["token_type", "tokenType"]) {
+        p.token_type = kind;
+    }
+    Ok(access)
+}
+
+async fn fetch_sub(
+    s: &Shared,
+    p: &mut Provider,
+    turnstile_token: Option<&str>,
+) -> Result<Metrics, RemoteError> {
     let mut access;
+    let mut refreshed = false;
+    let mut logged_in = false;
     if p.auth_mode == "password" {
-        let password = decrypt(s, &p.password)?;
-        let login = request(
-            s,
-            p,
-            "/api/v1/auth/login",
-            &HeaderMap::new(),
-            Some(json!({"email":p.username,"password":password})),
-        )
-        .await?;
-        access = text(&login.data, &["access_token", "accessToken"])
-            .ok_or_else(|| RemoteError::invalid("/api/v1/auth/login"))?;
-        if let Some(kind) = text(&login.data, &["token_type", "tokenType"]) {
-            p.token_type = kind;
+        access = decrypt(s, &p.access_token)?;
+        if access.is_empty() && !p.refresh_token.is_empty() {
+            match sub_refresh(s, p).await {
+                Ok(token) => {
+                    access = token;
+                    refreshed = true;
+                }
+                Err(error) if error.unauthorized => {
+                    access = sub_password_login(s, p, turnstile_token).await?;
+                    logged_in = true;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        if access.is_empty() {
+            access = sub_password_login(s, p, turnstile_token).await?;
+            logged_in = true;
         }
     } else {
         access = decrypt(s, &p.access_token)?;
     }
-    let mut refreshed = false;
     if access.is_empty() {
         access = sub_refresh(s, p).await?;
         refreshed = true;
@@ -711,12 +868,24 @@ async fn fetch_sub(s: &Shared, p: &mut Provider) -> Result<Metrics, RemoteError>
     )?;
     match sub_metrics(s, p, &headers).await {
         Err(error)
-            if error.unauthorized
-                && p.auth_mode == "token"
-                && !p.refresh_token.is_empty()
-                && !refreshed =>
+            if error.unauthorized && !p.refresh_token.is_empty() && !refreshed && !logged_in =>
         {
-            access = sub_refresh(s, p).await?;
+            access = match sub_refresh(s, p).await {
+                Ok(token) => token,
+                Err(refresh_error) if refresh_error.unauthorized && p.auth_mode == "password" => {
+                    sub_password_login(s, p, turnstile_token).await?
+                }
+                Err(refresh_error) => return Err(refresh_error),
+            };
+            insert_header(
+                &mut headers,
+                "authorization",
+                &format!("{} {access}", p.token_type),
+            )?;
+            sub_metrics(s, p, &headers).await
+        }
+        Err(error) if error.unauthorized && p.auth_mode == "password" && !logged_in => {
+            access = sub_password_login(s, p, turnstile_token).await?;
             insert_header(
                 &mut headers,
                 "authorization",
@@ -803,9 +972,13 @@ async fn fetch_new(s: &Shared, p: &mut Provider) -> Result<Metrics, RemoteError>
     })
 }
 
-async fn fetch(s: &Shared, p: &mut Provider) -> Result<Metrics, RemoteError> {
+async fn fetch(
+    s: &Shared,
+    p: &mut Provider,
+    turnstile_token: Option<&str>,
+) -> Result<Metrics, RemoteError> {
     if p.kind == "sub2api" {
-        fetch_sub(s, p).await
+        fetch_sub(s, p, turnstile_token).await
     } else {
         fetch_new(s, p).await
     }
@@ -901,7 +1074,7 @@ pub async fn refresh(
     let before = lookup(&s, &provider_id)?;
     require_authenticated(&before)?;
     let mut after = before.clone();
-    match fetch(&s, &mut after).await {
+    match fetch(&s, &mut after, None).await {
         Ok(metrics) => {
             let stored = persist_result(&s, &before, &after, Some(metrics), None)?;
             Ok(Json(public(&stored)).into_response())
@@ -923,6 +1096,8 @@ pub async fn test(
     Json(input): Json<Input>,
 ) -> ApiResult<Value> {
     auth(&s, &h)?;
+    let turnstile_token =
+        (!input.turnstile_token.trim().is_empty()).then(|| input.turnstile_token.clone());
     let existing = input
         .id
         .as_deref()
@@ -930,7 +1105,7 @@ pub async fn test(
         .transpose()?;
     let mut candidate = build(&s, input, existing.as_ref())?;
     let before = candidate.clone();
-    let result = fetch(&s, &mut candidate).await;
+    let result = fetch(&s, &mut candidate, turnstile_token.as_deref()).await;
     cache_rotation(&s, &before, &candidate)?;
     // A test of saved credentials may rotate a single-use refresh token.
     // Keep the rotation so the next refresh does not reuse an invalid token.

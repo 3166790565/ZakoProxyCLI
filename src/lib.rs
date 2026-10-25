@@ -187,6 +187,14 @@ pub fn app(state: Shared) -> Router {
         )
         .route("/api/providers/test", post(providers::test))
         .route(
+            "/api/providers/auth-requirements",
+            post(providers::auth_requirements_input),
+        )
+        .route(
+            "/api/providers/{id}/auth-requirements",
+            get(providers::auth_requirements),
+        )
+        .route(
             "/api/providers/{id}",
             put(providers::edit).delete(providers::delete),
         )

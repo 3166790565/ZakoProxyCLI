@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import type { FormEvent, KeyboardEvent } from "react";
 import { AlertCircle, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDollarSign, CreditCard, ExternalLink, Eye, EyeOff, KeyRound, LoaderCircle, Pencil, Plus, RefreshCw, Server, ShieldCheck, Trash2, Wallet } from "lucide-react";
 import { api, errorMessage, time } from "./api";
+import type { ProviderAuthRequirements } from "./api";
 import { Badge, Button, Confirm, Empty, ErrorBox, Field, IconButton, Modal, ModalForm, SearchInput } from "./components";
 import type { Notice } from "./components";
 import "./providers.css";
@@ -20,6 +21,8 @@ type Provider = {
   official?: boolean; readonly?: boolean; pinned?: boolean;
 };
 type TestResult = Pick<Provider, "balance" | "today_usage" | "total_usage" | "total_recharged" | "total_recharged_estimated" | "currency" | "user_id"> & { ok: boolean };
+// Leave a short margin before the server's 600-second preflight cache expires.
+const providerPreflightTtlMs = 590_000;
 type FormValues = {
   name: string; kind: ProviderKind; base_url: string; auth_mode: AuthMode;
   username: string; password: string; access_token: string; refresh_token: string;
@@ -31,7 +34,7 @@ function money(value: number | null | undefined, currency = "USD") {
   return `${currency === "CNY" ? "¥" : "$"}${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: value !== 0 && Math.abs(value) < 0.01 ? 4 : 2 })}`;
 }
 function defaults(provider?: Provider): FormValues {
-  return { name: provider?.name || "", kind: provider?.kind || "sub2api", base_url: provider?.base_url || "", auth_mode: provider?.auth_mode || "password", username: provider?.username || "", password: "", access_token: "", refresh_token: "", user_id: provider?.user_id || "", token_type: provider?.token_type || "Bearer", price_multiplier: String(provider?.price_multiplier ?? 1), notes: provider?.notes || "" };
+  return { name: provider?.name || "", kind: provider?.official ? "sub2api" : provider?.kind || "sub2api", base_url: provider?.base_url || "", auth_mode: provider?.auth_mode || "password", username: provider?.username || "", password: "", access_token: "", refresh_token: "", user_id: provider?.user_id || "", token_type: provider?.token_type || "Bearer", price_multiplier: String(provider?.price_multiplier ?? 1), notes: provider?.notes || "" };
 }
 function payload(values: FormValues, id?: string) {
   return { ...values, id, name: values.name.trim(), base_url: values.base_url.trim().replace(/\/+$/, ""), username: values.username.trim(), user_id: values.user_id.trim(), access_token: values.access_token.trim(), refresh_token: values.refresh_token.trim(), token_type: values.token_type.trim() || "Bearer", price_multiplier: Number(values.price_multiplier), notes: values.notes.trim() };
@@ -40,6 +43,41 @@ function payload(values: FormValues, id?: string) {
 function normalizedSite(value: string) {
   try { return new URL(value.trim()).toString().replace(/\/+$/, ""); }
   catch { return value.trim().replace(/\/+$/, ""); }
+}
+
+let providerTurnstileScript: Promise<void> | null = null;
+function loadProviderTurnstile() {
+  if (window.turnstile) return Promise.resolve();
+  if (providerTurnstileScript) return providerTurnstileScript;
+  providerTurnstileScript = new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>("script[data-provider-turnstile], script[src*='challenges.cloudflare.com/turnstile/v0/api.js']");
+    const script = existing || document.createElement("script");
+    const cleanup = () => {
+      script.removeEventListener("load", loaded);
+      script.removeEventListener("error", failed);
+    };
+    const fail = (message: string) => {
+      cleanup();
+      script.remove();
+      providerTurnstileScript = null;
+      reject(new Error(message));
+    };
+    const loaded = () => {
+      if (window.turnstile) { cleanup(); resolve(); }
+      else fail("Cloudflare Turnstile 脚本未能启动，请重试");
+    };
+    const failed = () => fail("Cloudflare Turnstile 脚本加载失败，请检查网络后重试");
+    script.addEventListener("load", loaded, { once: true });
+    script.addEventListener("error", failed, { once: true });
+    if (!existing) {
+      script.dataset.providerTurnstile = "true";
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+  });
+  return providerTurnstileScript;
 }
 
 function hasCredentials(provider: Provider) {
@@ -132,8 +170,80 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
   const [values, setValues] = useState(() => defaults(provider));
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
   const [error, setError] = useState("");
-  const [tested, setTested] = useState<TestResult | null>(null);
-  const update = <K extends keyof FormValues>(key: K, value: FormValues[K]) => { setValues((current) => ({ ...current, [key]: value })); setTested(null); setError(""); };
+  const [tested, setTested] = useState<(TestResult & { testedAt: number }) | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [requirements, setRequirements] = useState<{ key: string; status: "loading" | "loaded" | "error"; required?: boolean; siteKey?: string; error?: string } | null>(null);
+  const [requirementsRetry, setRequirementsRetry] = useState(0);
+  const [widgetLoading, setWidgetLoading] = useState(false);
+  const [widgetError, setWidgetError] = useState("");
+  const [widgetRetry, setWidgetRetry] = useState(0);
+  const turnstileRef = useRef<HTMLDivElement>(null);
+  const turnstileWidget = useRef<string | null>(null);
+  const widgetGeneration = useRef(0);
+  const turnstileLabelId = useId();
+  const authRequirementsKey = (() => {
+    if (values.kind !== "sub2api" || values.auth_mode !== "password") return "";
+    try {
+      const url = new URL(values.base_url.trim());
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) return "";
+      return normalizedSite(values.base_url);
+    } catch { return ""; }
+  })();
+  useEffect(() => {
+    if (!authRequirementsKey) { setRequirements(null); return; }
+    let active = true;
+    setRequirements({ key: authRequirementsKey, status: "loading" });
+    void api<ProviderAuthRequirements>("/providers/auth-requirements", "POST", { kind: values.kind, base_url: values.base_url.trim() })
+      .then((result) => { if (active) setRequirements({ key: authRequirementsKey, status: "loaded", required: result.turnstile_required, siteKey: result.turnstile_site_key || "" }); })
+      .catch((failure) => { if (active) setRequirements({ key: authRequirementsKey, status: "error", error: errorMessage(failure) }); });
+    return () => { active = false; };
+  }, [authRequirementsKey, requirementsRetry, values.base_url, values.kind]);
+  const currentRequirements = authRequirementsKey && requirements?.key === authRequirementsKey ? requirements : null;
+  const requirementsLoading = Boolean(authRequirementsKey && (!currentRequirements || currentRequirements.status === "loading"));
+  const turnstileRequired = Boolean(currentRequirements?.status === "loaded" && currentRequirements.required);
+  const turnstileSiteKey = turnstileRequired ? currentRequirements?.siteKey || "" : "";
+  function resetChallenge() {
+    setTurnstileToken("");
+    if (turnstileWidget.current && window.turnstile) {
+      try { window.turnstile.reset(turnstileWidget.current); } catch { /* Widget may have been removed during a form transition. */ }
+    }
+  }
+  const update = <K extends keyof FormValues>(key: K, value: FormValues[K]) => {
+    setValues((current) => ({ ...current, [key]: value }));
+    setError("");
+    if (["kind", "base_url", "auth_mode", "username", "password", "access_token", "refresh_token", "user_id", "token_type"].includes(key)) { setTested(null); resetChallenge(); }
+  };
+  useEffect(() => {
+    const generation = ++widgetGeneration.current;
+    setWidgetError("");
+    setWidgetLoading(Boolean(turnstileSiteKey));
+    if (!turnstileSiteKey || !turnstileRef.current) {
+      if (turnstileWidget.current && window.turnstile && typeof window.turnstile.remove === "function") window.turnstile.remove(turnstileWidget.current);
+      turnstileWidget.current = null;
+      setTurnstileToken("");
+      return;
+    }
+    setTurnstileToken("");
+    void loadProviderTurnstile().then(() => {
+      if (generation !== widgetGeneration.current || !turnstileRef.current || !window.turnstile) return;
+      turnstileWidget.current = window.turnstile.render(turnstileRef.current, {
+        sitekey: turnstileSiteKey,
+        callback: (token) => { setTurnstileToken(token); setWidgetError(""); },
+        "expired-callback": () => { resetChallenge(); setWidgetError("验证已过期，请重新完成安全验证。"); },
+        "error-callback": () => { resetChallenge(); setWidgetError("验证遇到问题，请重新完成安全验证。"); },
+      });
+      setWidgetLoading(false);
+    }).catch((failure: unknown) => {
+      if (generation !== widgetGeneration.current) return;
+      setWidgetLoading(false);
+      setWidgetError(errorMessage(failure));
+    });
+    return () => {
+      widgetGeneration.current += 1;
+      if (turnstileWidget.current && window.turnstile && typeof window.turnstile.remove === "function") window.turnstile.remove(turnstileWidget.current);
+      turnstileWidget.current = null;
+    };
+  }, [turnstileSiteKey, widgetRetry]);
   const identityChanges = provider ? [
     normalizedSite(provider.base_url) !== normalizedSite(values.base_url) ? "站点地址" : "",
     provider.kind !== values.kind ? "平台" : "",
@@ -157,11 +267,24 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
       if (!values.access_token.trim() && !(canReuse && provider?.has_access_token) && !(values.kind === "sub2api" && (values.refresh_token.trim() || (canReuse && provider?.has_refresh_token)))) throw new Error("请填写访问令牌");
     }
   }
+  function validateRequirements() {
+    if (!authRequirementsKey) return;
+    if (!currentRequirements || currentRequirements.status === "loading") throw new Error("正在读取站点安全验证要求，请稍候");
+    if (currentRequirements.status === "error") throw new Error(`读取站点安全验证要求失败：${currentRequirements.error || "请重试"}`);
+    if (currentRequirements.required && !currentRequirements.siteKey) throw new Error("此站点要求 Cloudflare Turnstile 验证，但未返回站点密钥");
+  }
   async function test() {
     setError(""); setBusy("test"); setTested(null);
-    try { validate(); const result = await api<TestResult>("/providers/test", "POST", payload(values, provider?.id)); if (!result.ok) throw new Error("登录验证失败，请检查站点和凭据"); setTested(result); }
+    try {
+      validate(); validateRequirements();
+      if (turnstileRequired && !turnstileToken) throw new Error("请先完成 Cloudflare Turnstile 安全验证");
+      const testedAt = Date.now();
+      const result = await api<TestResult>("/providers/test", "POST", { ...payload(values, provider?.id), ...(turnstileRequired ? { turnstile_token: turnstileToken } : {}) });
+      if (!result.ok) throw new Error("登录验证失败，请检查站点和凭据");
+      setTested({ ...result, testedAt });
+    }
     catch (failure) { setError(errorMessage(failure)); }
-    finally { setBusy(null); }
+    finally { if (turnstileRequired) resetChallenge(); setBusy(null); }
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError(""); setBusy("save");
@@ -169,9 +292,17 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
     try {
       validate();
       const credentialsChanged = !canReuse || hasNewCredentials || (values.auth_mode === "token" && (values.token_type.trim() || "Bearer") !== provider?.token_type);
-      if (!provider || credentialsChanged) {
-        const result = await api<TestResult>("/providers/test", "POST", payload(values, provider?.id));
-        if (!result.ok) throw new Error("登录验证失败，请检查站点和凭据");
+      const testedFresh = tested && Date.now() - tested.testedAt < providerPreflightTtlMs;
+      if ((!provider || credentialsChanged) && !testedFresh) {
+        if (tested) setTested(null);
+        validateRequirements();
+        if (turnstileRequired && !turnstileToken) throw new Error(tested ? "登录验证已过期，请重新完成 Cloudflare Turnstile 安全验证后保存" : "请先完成 Cloudflare Turnstile 安全验证");
+        try {
+          const testedAt = Date.now();
+          const result = await api<TestResult>("/providers/test", "POST", { ...payload(values, provider?.id), ...(turnstileRequired ? { turnstile_token: turnstileToken } : {}) });
+          if (!result.ok) throw new Error("登录验证失败，请检查站点和凭据");
+          setTested({ ...result, testedAt });
+        } finally { if (turnstileRequired) resetChallenge(); }
       }
       const result = await api<Provider>(provider ? `/providers/${provider.id}` : "/providers", provider ? "PUT" : "POST", payload(values));
       saved = true;
@@ -179,12 +310,12 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
       catch (failure) { notify(`服务提供商已保存，同步暂未完成：${errorMessage(failure)}`, true); await onSaved(); onClose(); return; }
       await onSaved(); onClose(); notify(provider ? "服务提供商已更新" : "服务提供商登录成功，已添加");
     } catch (failure) { setError(saved ? `已保存，但列表更新失败：${errorMessage(failure)}` : errorMessage(failure)); }
-    finally { setBusy(null); }
+    finally { if (turnstileRequired && turnstileToken) resetChallenge(); setBusy(null); }
   }
   return <Modal title={provider ? "编辑服务提供商" : "添加服务提供商"} subtitle="连接站点，集中查看余额与使用情况" onClose={onClose} busy={Boolean(busy)} wide>
     <ModalForm onSubmit={submit} onClose={onClose} busy={Boolean(busy)} error={error} submit={provider ? "保存更改" : "登录并添加"}>
       <Field label="站点名称" hint={provider?.official ? "官方预置名称，不可修改" : undefined}><input autoFocus={!provider?.official} value={values.name} onChange={(event) => update("name", event.target.value)} placeholder="例如：杂鱼AI" maxLength={100} required disabled={Boolean(busy) || Boolean(provider?.official)} /></Field>
-      <fieldset className="provider-platforms" disabled={Boolean(busy)}><legend>服务提供商平台</legend>{(["sub2api", "newapi"] as const).map((kind) => <button type="button" key={kind} className={`provider-platform ${values.kind === kind ? "selected" : ""}`} aria-pressed={values.kind === kind} onClick={() => update("kind", kind)}><span className={`provider-type-icon ${kind}`}><Server size={19} /></span><span><strong>{labels[kind]}</strong><small>{kind === "sub2api" ? "邮箱登录 · Access Token" : "账号登录 · 系统访问令牌"}</small></span>{values.kind === kind ? <CheckCircle2 size={18} /> : <ChevronRight size={17} />}</button>)}</fieldset>
+      <fieldset className="provider-platforms" disabled={Boolean(busy) || Boolean(provider?.official)}><legend>服务提供商平台{provider?.official ? "（官方预置，不可修改）" : ""}</legend>{(["sub2api", "newapi"] as const).map((kind) => <button type="button" key={kind} className={`provider-platform ${values.kind === kind ? "selected" : ""}`} aria-pressed={values.kind === kind} onClick={() => update("kind", kind)}><span className={`provider-type-icon ${kind}`}><Server size={19} /></span><span><strong>{labels[kind]}</strong><small>{kind === "sub2api" ? "邮箱登录 · Access Token" : "账号登录 · 系统访问令牌"}</small></span>{values.kind === kind ? <CheckCircle2 size={18} /> : <ChevronRight size={17} />}</button>)}</fieldset>
       <Field label="站点地址" hint={provider?.official ? "官方预置地址，不可修改" : "填写站点首页地址，不需要添加 /v1 或 /api。"}><input type="url" value={values.base_url} onChange={(event) => update("base_url", event.target.value)} placeholder="https://api.zayuapi.com" required disabled={Boolean(busy) || Boolean(provider?.official)} autoComplete="url" /></Field>
       <fieldset className="provider-auth-options" disabled={Boolean(busy)}><legend>认证方式</legend>{(["password", "token"] as const).map((mode) => <label key={mode} className={values.auth_mode === mode ? "selected" : ""}><input type="radio" name="provider-auth" value={mode} checked={values.auth_mode === mode} onChange={() => update("auth_mode", mode)} />{mode === "password" ? <ShieldCheck size={17} /> : <KeyRound size={17} />}<span>{mode === "password" ? "账号密码" : values.kind === "sub2api" ? "Sub2API 令牌" : "New API 用户 Key"}</span></label>)}</fieldset>
       {values.auth_mode === "password" ? <div className="form-grid provider-form-grid"><Field label={values.kind === "sub2api" ? "登录邮箱" : "登录账号"}><input value={values.username} onChange={(event) => update("username", event.target.value)} placeholder={values.kind === "sub2api" ? "name@example.com" : "请输入站点登录账号"} required disabled={Boolean(busy)} autoComplete="username" /></Field><Field label="登录密码" hint={canReuse && provider?.has_password ? "留空保留已保存的密码" : undefined}><SecretInput value={values.password} onChange={(value) => update("password", value)} placeholder={canReuse && provider?.has_password ? "已保存，留空保持不变" : "请输入登录密码"} required={!(canReuse && provider?.has_password)} disabled={Boolean(busy)} /></Field></div> : values.kind === "sub2api" ? <>
@@ -195,6 +326,10 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
       <div className="form-grid provider-form-grid"><Field label="充值倍率" hint="人民币展示金额 = 美元金额 × 充值倍率。"><input type="number" value={values.price_multiplier} onChange={(event) => update("price_multiplier", event.target.value)} min="0.000001" step="any" required disabled={Boolean(busy)} /></Field><Field label="备注" optional><input value={values.notes} onChange={(event) => update("notes", event.target.value)} placeholder="用于区分站点或记录说明" maxLength={500} disabled={Boolean(busy)} /></Field></div>
       {identityChanges.length > 0 && <p className="provider-form-note"><AlertCircle size={15} /><span>已更换{identityChanges.join("、")}，{hasNewCredentials ? "保存时将验证新凭据。" : `原凭据不会复用，请填写新的${values.auth_mode === "password" ? "登录密码" : values.kind === "sub2api" ? "访问令牌或刷新令牌" : "系统访问令牌"}。`}</span></p>}
       <div className="provider-test-row"><Button type="button" onClick={() => void test()} busy={busy === "test"} disabled={Boolean(busy)}><ShieldCheck size={16} />测试登录</Button><span>验证登录后获取真实余额；凭据不会在列表中显示。</span></div>
+      {authRequirementsKey && requirementsLoading && <div className="provider-turnstile-state" role="status"><LoaderCircle size={15} className="spin" />正在读取此站点的安全验证要求…</div>}
+      {authRequirementsKey && currentRequirements?.status === "error" && <div className="provider-turnstile-state is-error" role="alert"><AlertCircle size={15} /><span>读取安全验证要求失败：{currentRequirements.error}</span><Button type="button" className="small-button" onClick={() => setRequirementsRetry((value) => value + 1)} disabled={Boolean(busy)}>重试</Button></div>}
+      {turnstileRequired && !turnstileSiteKey && <div className="provider-turnstile-state is-error" role="alert"><AlertCircle size={15} /><span>此站点要求 Cloudflare Turnstile 验证，但未返回可用的站点密钥。</span></div>}
+      {turnstileRequired && Boolean(turnstileSiteKey) && <div className="provider-turnstile" role="group" aria-labelledby={turnstileLabelId}><p id={turnstileLabelId}>此 Sub2API 站点要求完成 Cloudflare 安全验证后才能登录。</p><div ref={turnstileRef} className="provider-turnstile-widget" />{widgetLoading && <span className="provider-turnstile-hint" role="status"><LoaderCircle size={14} className="spin" />正在加载安全验证…</span>}{widgetError && <span className="provider-turnstile-hint is-error" role="alert">{widgetError}<Button type="button" className="small-button" onClick={() => setWidgetRetry((value) => value + 1)} disabled={Boolean(busy)}>重新加载</Button></span>}{!widgetLoading && !widgetError && !turnstileToken && <span className="provider-turnstile-hint">请在上方完成验证。</span>}{turnstileToken && <span className="provider-turnstile-hint is-success" role="status"><CheckCircle2 size={14} />验证完成</span>}</div>}
       {tested && <div className="provider-test-success" role="status"><CheckCircle2 size={18} /><div><strong>登录验证成功</strong><span>余额 {money(tested.balance)} · 今日消费 {money(tested.today_usage)}</span></div><Check size={16} /></div>}
     </ModalForm>
   </Modal>;

@@ -4,7 +4,7 @@
 
 A self-hosted Rust Responses / Chat Completions / Anthropic Messages API relay with a responsive desktop/mobile administration console, SQLite persistence, and Docker Compose deployment. The console includes a dashboard, groups, upstream accounts, client API keys, service providers, request logs, and system settings.
 
-Current release: **v0.12.1**, fixing official-provider credential editing and keeping its name and site URL fixed. Includes service-provider imports, upstream key creation and per-client-key instruction policies from **v0.12.0**.
+Current release: **v0.12.2**, adding Sub2API Turnstile login and session renewal, with the official provider name, URL and platform fixed. Includes service-provider imports, upstream key creation and per-client-key instruction policies from **v0.12.0**.
 
 ## Relay Recommendation: 杂鱼 API
 
@@ -95,6 +95,13 @@ In account creation, **From service provider** lists existing keys with their na
 Choose **Create from provider** at the top of the key list, then manually select an available group in the second dialog. **Create** sends the server-generated name `【ZakoAI】` followed by the original group name; **Cancel** sends no creation request. On success, the dialog closes and the list refreshes. The UI snapshots fresh key IDs immediately before creation and selects the unique new, available key matching the returned name and group, excluding old same-name keys. Refresh again if visibility is delayed; multiple matching new keys require manual selection. A failed response can follow a committed upstream write, so creation is never automatically retried: refresh and confirm first.
 
 Sub2API creates a key in the selected group. New API uses unlimited quota, no expiry, no model or IP restrictions and no cross-group retry; adjust restrictions at the upstream site if needed. These are upstream credentials, distinct from local client keys used to access this relay.
+
+### v0.12.2 Provider Verification And Session Renewal
+
+- Discover the Sub2API site's public Turnstile requirements and let the user complete the challenge in the browser. The one-time proof is forwarded to upstream login and is not stored in configuration or logs. The upstream site key must allow the console hostname; upstream remains responsible for verification.
+- Reuse encrypted login sessions across testing, saving, statistics, key/group reads and imports. Renew expired access tokens; prompt for a new challenge when an upstream session cannot be renewed and verification is required.
+- Restore password login for older configurations without saved session tokens when the site does not require Turnstile. Retry failed widget scripts and recheck stale login tests before saving.
+- Fix the official provider to 杂鱼AI, `https://www.zayuapi.com`, and Sub2API while keeping credentials editable.
 
 ### v0.12.1 Official Provider Login Fix
 

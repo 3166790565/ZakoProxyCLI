@@ -91,6 +91,10 @@ export type ProviderSummary = {
   readonly?: boolean;
   pinned?: boolean;
 };
+export type ProviderAuthRequirements = {
+  turnstile_required: boolean;
+  turnstile_site_key: string;
+};
 export type ProviderKeyGroup = { id: string; name: string; multiplier: number | null };
 export type ProviderKeyGroups = { provider_id: string; groups: ProviderKeyGroup[] };
 export type ProviderKeyCreated = { provider_id: string; created: true; name: string; group_id: string };

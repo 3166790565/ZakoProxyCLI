@@ -105,23 +105,33 @@ fn remote(error: RemoteError) -> ApiError {
     ApiError(StatusCode::BAD_GATEWAY, error.message)
 }
 
+async fn renew_sub_session(s: &Shared, p: &mut Provider) -> Result<String, RemoteError> {
+    if !p.refresh_token.is_empty() {
+        match providers::sub_refresh(s, p).await {
+            Ok(access) => return Ok(access),
+            Err(error) if error.unauthorized && p.auth_mode == "password" => {}
+            Err(error) => return Err(error),
+        }
+    }
+    if p.auth_mode == "password" {
+        providers::sub_password_login(s, p, None).await
+    } else {
+        providers::sub_refresh(s, p).await
+    }
+}
+
 async fn headers(s: &Shared, p: &mut Provider) -> Result<HeaderMap, RemoteError> {
     let mut h = HeaderMap::new();
     if p.kind == "sub2api" {
         let access = if p.auth_mode == "password" {
-            let login = providers::request(
-                s,
-                p,
-                "/api/v1/auth/login",
-                &h,
-                Some(json!({"email":p.username,"password":providers::decrypt(s,&p.password)?})),
-            )
-            .await?;
-            if let Some(kind) = providers::text(&login.data, &["token_type", "tokenType"]) {
-                p.token_type = kind;
+            let mut access = providers::decrypt(s, &p.access_token)?;
+            if access.is_empty() && !p.refresh_token.is_empty() {
+                access = renew_sub_session(s, p).await?;
             }
-            providers::text(&login.data, &["access_token", "accessToken"])
-                .ok_or_else(|| RemoteError::invalid("/api/v1/auth/login"))?
+            if access.is_empty() {
+                access = renew_sub_session(s, p).await?;
+            }
+            access
         } else {
             let access = providers::decrypt(s, &p.access_token)?;
             if access.is_empty() {
@@ -359,10 +369,9 @@ async fn authenticated_groups(
         Err(error)
             if error.unauthorized
                 && p.kind == "sub2api"
-                && p.auth_mode == "token"
-                && !p.refresh_token.is_empty() =>
+                && (!p.refresh_token.is_empty() || p.auth_mode == "password") =>
         {
-            let access = providers::sub_refresh(s, p).await?;
+            let access = renew_sub_session(s, p).await?;
             providers::insert_header(
                 &mut h,
                 "authorization",
@@ -520,10 +529,9 @@ async fn load(
             Err(e)
                 if e.unauthorized
                     && p.kind == "sub2api"
-                    && p.auth_mode == "token"
-                    && !p.refresh_token.is_empty() =>
+                    && (!p.refresh_token.is_empty() || p.auth_mode == "password") =>
             {
-                let access = providers::sub_refresh(s, &mut p).await?;
+                let access = renew_sub_session(s, &mut p).await?;
                 providers::insert_header(
                     &mut h,
                     "authorization",
