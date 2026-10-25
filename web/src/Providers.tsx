@@ -168,6 +168,7 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
   const requirementsLoading = Boolean(authRequirementsKey && (!currentRequirements || currentRequirements.status === "loading"));
   const turnstileRequired = Boolean(currentRequirements?.status === "loaded" && currentRequirements.required);
   const turnstileSiteKey = turnstileRequired ? currentRequirements?.siteKey || "" : "";
+  const domainUnauthorized = challenge?.code === "110200";
   const update = <K extends keyof FormValues>(key: K, value: FormValues[K]) => {
     setValues((current) => ({ ...current, [key]: value }));
     setError("");
@@ -278,6 +279,7 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
       <Field label="站点地址" hint={provider?.official ? "官方预置地址，不可修改" : "填写站点首页地址，不需要添加 /v1 或 /api。"}><input type="url" value={values.base_url} onChange={(event) => update("base_url", event.target.value)} placeholder="https://api.zayuapi.com" required disabled={Boolean(busy) || Boolean(provider?.official)} autoComplete="url" /></Field>
       <fieldset className="provider-auth-options" disabled={Boolean(busy)}><legend>认证方式</legend>{(["password", "token"] as const).map((mode) => <label key={mode} className={values.auth_mode === mode ? "selected" : ""}><input type="radio" name="provider-auth" value={mode} checked={values.auth_mode === mode} onChange={() => update("auth_mode", mode)} />{mode === "password" ? <ShieldCheck size={17} /> : <KeyRound size={17} />}<span>{mode === "password" ? "账号密码" : values.kind === "sub2api" ? "Sub2API 令牌" : "New API 用户 Key"}</span></label>)}</fieldset>
       {values.auth_mode === "password" ? <div className="form-grid provider-form-grid"><Field label={values.kind === "sub2api" ? "登录邮箱" : "登录账号"}><input value={values.username} onChange={(event) => update("username", event.target.value)} placeholder={values.kind === "sub2api" ? "name@example.com" : "请输入站点登录账号"} required disabled={Boolean(busy)} autoComplete="username" /></Field><Field label="登录密码" hint={canReuse && provider?.has_password ? "留空保留已保存的密码" : undefined}><SecretInput value={values.password} onChange={(value) => update("password", value)} placeholder={canReuse && provider?.has_password ? "已保存，留空保持不变" : "请输入登录密码"} required={!(canReuse && provider?.has_password)} disabled={Boolean(busy)} /></Field></div> : values.kind === "sub2api" ? <>
+        <div className="provider-session-guide" role="note"><strong>使用上游登录会话连接</strong><p>先在服务商原站正常登录，再填入该账号的 Access Token 或 Refresh Token。这里使用登录会话，不是模型调用的 API Key；浏览器不能自动读取其他站点的登录信息。</p><a className="provider-visit" href={values.base_url} target="_blank" rel="noopener noreferrer">打开服务商站点<ExternalLink size={13} /></a><small>建议同时填写 Refresh Token 以自动续期；仅填写 Access Token 时，到期后需重新连接。</small></div>
         <Field label="Access Token" hint="使用站点的登录访问令牌；也可仅填写 Refresh Token。"><SecretInput value={values.access_token} onChange={(value) => update("access_token", value)} placeholder={canReuse && provider?.has_access_token ? "已保存，留空保持不变" : "粘贴 Access Token"} disabled={Boolean(busy)} /></Field>
         <div className="form-grid provider-form-grid"><Field label="Refresh Token" optional hint={canReuse && provider?.has_refresh_token ? "留空保留已保存的刷新令牌" : "用于访问令牌过期后刷新登录"}><SecretInput value={values.refresh_token} onChange={(value) => update("refresh_token", value)} placeholder={canReuse && provider?.has_refresh_token ? "已保存，留空保持不变" : "粘贴 Refresh Token"} disabled={Boolean(busy)} /></Field><Field label="Token Type"><input value={values.token_type} onChange={(event) => update("token_type", event.target.value)} placeholder="Bearer" disabled={Boolean(busy)} /></Field></div>
       </> : <div className="form-grid provider-form-grid"><Field label="用户 ID" hint="在 New API 个人设置中查看。"><input value={values.user_id} onChange={(event) => update("user_id", event.target.value)} placeholder="例如：123" required disabled={Boolean(busy)} inputMode="numeric" /></Field><Field label="系统访问令牌" hint="在个人设置中生成，不是 sk- 开头的模型 API Key。"><SecretInput value={values.access_token} onChange={(value) => update("access_token", value)} placeholder={canReuse && provider?.has_access_token ? "已保存，留空保持不变" : "粘贴系统访问令牌"} required={!(canReuse && provider?.has_access_token)} disabled={Boolean(busy)} /></Field></div>}
@@ -289,16 +291,17 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
       {authRequirementsKey && currentRequirements?.status === "error" && <div className="provider-turnstile-state is-error" role="alert"><AlertCircle size={15} /><span>读取安全验证要求失败：{currentRequirements.error}</span><Button type="button" className="small-button" onClick={() => setRequirementsRetry((value) => value + 1)} disabled={Boolean(busy)}>重试</Button></div>}
       {turnstileRequired && !turnstileSiteKey && <div className="provider-turnstile-state is-error" role="alert"><AlertCircle size={15} /><span>此站点要求 Cloudflare Turnstile 验证，但未返回可用的站点密钥。</span></div>}
       {turnstileRequired && Boolean(turnstileSiteKey) && <div className="provider-turnstile" role="group" aria-labelledby={turnstileLabelId}>
-        <p id={turnstileLabelId}>请完成此服务提供商的安全验证。当前控制台域名：<strong>{window.location.hostname}</strong>。</p>
+        <p id={turnstileLabelId}>{domainUnauthorized ? "当前域名暂不支持直接密码登录" : "请完成此服务提供商的安全验证"}。当前控制台域名：<strong>{window.location.hostname}</strong>。</p>
         <div ref={turnstileRef} className="provider-turnstile-widget" />
         {widgetLoading && <span className="provider-turnstile-hint" role="status"><LoaderCircle size={14} className="spin" />正在加载安全验证…</span>}
         {widgetError && <span className="provider-turnstile-hint is-error" role="alert">{widgetError}</span>}
         {!widgetLoading && !widgetError && challenge && <span className={`provider-turnstile-hint${challenge.status === "verified" ? " is-success" : ""}`} role="status">{challenge.status === "verified" && <CheckCircle2 size={14} />}{challenge.message}</span>}
         <div className="provider-turnstile-actions">
-          <Button type="button" className="small-button" onClick={() => setWidgetRetry((value) => value + 1)} disabled={Boolean(busy) || widgetLoading}><RefreshCw size={13} />重新验证</Button>
+          {!domainUnauthorized && <Button type="button" className="small-button" onClick={() => setWidgetRetry((value) => value + 1)} disabled={Boolean(busy) || widgetLoading}><RefreshCw size={13} />重新验证</Button>}
           <a className="provider-visit" href={values.base_url} target="_blank" rel="noopener noreferrer">在服务商站点登录<ExternalLink size={13} /></a>
           <Button type="button" className="small-button" onClick={() => update("auth_mode", "token")} disabled={Boolean(busy)}>使用 Sub2API 令牌</Button>
         </div>
+        {domainUnauthorized && <p className="provider-turnstile-hint">验证框已停止。请在服务商原站登录后选择“使用 Sub2API 令牌”；如需在此直接用密码登录，须由服务商授权此域名后重新打开表单。</p>}
       </div>}
       {tested && <div className="provider-test-success" role="status"><CheckCircle2 size={18} /><div><strong>登录验证成功</strong><span>余额 {money(tested.balance)} · 今日消费 {money(tested.today_usage)}</span></div><Check size={16} /></div>}
     </ModalForm>

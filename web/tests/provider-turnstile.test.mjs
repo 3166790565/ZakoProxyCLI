@@ -22,6 +22,7 @@ test('repeated domain failures stop without resetting or automatic retry', () =>
   assert.equal(w.resets, 0); assert.equal(w.options.retry, 'never');
   assert.equal(w.options['refresh-expired'], 'manual'); assert.equal(w.options['refresh-timeout'], 'manual');
   assert.equal(w.events.filter(e => e.status === 'error').length, 1);
+  assert.equal(w.removed, 1);
   assert.match(w.events.at(-1).message, /console.example.test/);
   w.options.callback('late-proof'); assert.equal(w.controller.consume(), '');
 });
@@ -37,6 +38,7 @@ test('expiry and timeout clear proof without starting new challenges', () => {
   for (const event of ['expired-callback', 'timeout-callback', 'unsupported-callback']) {
     const w = widget(); w.options.callback('fixture-proof'); w.options[event]();
     assert.equal(w.controller.consume(), ''); assert.equal(w.resets, 0);
+    assert.equal(w.removed, 1);
   }
 });
 test('five-minute expiry is enforced even before a delayed callback', () => {
@@ -51,6 +53,14 @@ test('disposed widgets ignore all late callbacks and remove only once', () => {
 });
 test('narrow forms use compact widgets without clipping the challenge', () => {
   assert.equal(widget(248).options.size, 'compact'); assert.equal(widget(480).options.size, 'flexible');
+});
+
+test('synchronous render failure removes its eventual widget exactly once', () => {
+  let removed = 0; const states = [];
+  const api = { render: (_, options) => { options['error-callback']('110200'); return 'sync-widget'; }, remove: id => { assert.equal(id, 'sync-widget'); removed++; } };
+  const controller = moduleWith().createProviderChallenge(api, { clientWidth: 400 }, 'public-key', state => states.push(state));
+  assert.equal(removed, 1); assert.equal(states.at(-1).code, '110200');
+  controller.dispose(); assert.equal(removed, 1);
 });
 test('network and cache failures have actionable messages', () => {
   const { challengeError } = moduleWith();

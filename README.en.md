@@ -4,7 +4,7 @@
 
 A self-hosted Rust Responses / Chat Completions / Anthropic Messages API relay with a responsive desktop/mobile administration console, SQLite persistence, and Docker Compose deployment. The console includes a dashboard, groups, upstream accounts, client API keys, service providers, request logs, and system settings.
 
-Current release: **v0.12.3**, adding Sub2API Turnstile login and session renewal, with the official provider name, URL and platform fixed. Includes service-provider imports, upstream key creation and per-client-key instruction policies from **v0.12.0**.
+Current release: **v0.12.4**, removing failed provider challenge widgets and guiding upstream session-token connections. Keeps the official provider identity fixed, service-provider imports, upstream key creation and per-client-key instruction policies.
 
 ## Relay Recommendation: 杂鱼 API
 
@@ -95,6 +95,12 @@ In account creation, **From service provider** lists existing keys with their na
 Choose **Create from provider** at the top of the key list, then manually select an available group in the second dialog. **Create** sends the server-generated name `【ZakoAI】` followed by the original group name; **Cancel** sends no creation request. On success, the dialog closes and the list refreshes. The UI snapshots fresh key IDs immediately before creation and selects the unique new, available key matching the returned name and group, excluding old same-name keys. Refresh again if visibility is delayed; multiple matching new keys require manual selection. A failed response can follow a committed upstream write, so creation is never automatically retried: refresh and confirm first.
 
 Sub2API creates a key in the selected group. New API uses unlimited quota, no expiry, no model or IP restrictions and no cross-group retry; adjust restrictions at the upstream site if needed. These are upstream credentials, distinct from local client keys used to access this relay.
+
+### v0.12.4 Failed Challenge Cleanup And Session Connections
+
+- Remove widgets on failure, timeout and expiry, including synchronous render errors, without duplicate removal.
+- Hide ineffective retries for unauthorized hostnames (110200) and explain normal upstream login followed by Sub2API session-token connection. Access tokens alone require reconnection after expiry; refresh tokens support renewal.
+- Real browser checks confirmed console sign-in, normal upstream sign-in and session-token test/save/refresh. Direct password connection still requires the upstream site key to authorize the console hostname. Automatic upstream Turnstile completion does not mean verification is disabled, and browsers cannot automatically read another site's session.
 
 ### v0.12.3 Provider Challenge Loop And CDN Fixes
 

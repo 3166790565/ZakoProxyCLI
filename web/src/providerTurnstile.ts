@@ -70,10 +70,17 @@ export function challengeError(code: string, hostname: string): string {
 export type ProviderChallenge = { consume: () => string; dispose: () => void };
 export function createProviderChallenge(api: TurnstileApi, element: HTMLElement, siteKey: string, onState: (state: ChallengeState) => void, hostname = window.location.hostname): ProviderChallenge {
   let active = true; let accepting = true; let token = ""; let expiresAt = 0;
+  let widgetId: string | null = null; let removeRequested = false;
+  const removeWidget = () => {
+    removeRequested = true;
+    if (widgetId === null) return;
+    const id = widgetId; widgetId = null;
+    api.remove(id);
+  };
   const emit = (state: ChallengeState) => { if (active) onState(state); };
-  const stop = (state: ChallengeState) => { if (!active || !accepting) return; accepting = false; token = ""; emit(state); };
+  const stop = (state: ChallengeState) => { if (!active || !accepting) return; accepting = false; token = ""; removeWidget(); emit(state); };
   emit({ status: "verifying", message: "请完成上方安全验证。" });
-  const widgetId = api.render(element, {
+  widgetId = api.render(element, {
     sitekey: siteKey, retry: "never", "refresh-expired": "manual", "refresh-timeout": "manual", "response-field": false,
     size: element.clientWidth > 0 && element.clientWidth < 300 ? "compact" : "flexible",
     callback: (value) => { if (active && accepting) { token = value; expiresAt = Date.now() + 300000; emit({ status: "verified", message: "验证完成" }); } },
@@ -82,6 +89,8 @@ export function createProviderChallenge(api: TurnstileApi, element: HTMLElement,
     "timeout-callback": () => stop({ status: "expired", message: "验证操作超时，请点击“重新验证”。" }),
     "unsupported-callback": () => stop({ status: "error", message: "当前浏览器不支持此安全验证，请更新浏览器或在上游登录后使用令牌连接。" }),
   });
+  // Some integrations invoke an error callback before render returns its id.
+  if (removeRequested) removeWidget();
   return {
     consume() {
       if (!active || !accepting || !token) return "";
@@ -90,6 +99,6 @@ export function createProviderChallenge(api: TurnstileApi, element: HTMLElement,
       emit({ status: "consumed", message: "本次验证已用于登录。登录成功后可直接保存；如需再次测试，请重新验证。" });
       return proof;
     },
-    dispose() { if (!active) return; active = false; accepting = false; token = ""; api.remove(widgetId); },
+    dispose() { if (!active) return; active = false; accepting = false; token = ""; removeWidget(); },
   };
 }
