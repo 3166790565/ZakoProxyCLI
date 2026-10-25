@@ -4,7 +4,7 @@
 
 A self-hosted Rust Responses / Chat Completions / Anthropic Messages API relay with a responsive desktop/mobile administration console, SQLite persistence, and Docker Compose deployment. The console includes a dashboard, groups, upstream accounts, client API keys, service providers, request logs, and system settings.
 
-Current release: **v0.12.2**, adding Sub2API Turnstile login and session renewal, with the official provider name, URL and platform fixed. Includes service-provider imports, upstream key creation and per-client-key instruction policies from **v0.12.0**.
+Current release: **v0.12.3**, adding Sub2API Turnstile login and session renewal, with the official provider name, URL and platform fixed. Includes service-provider imports, upstream key creation and per-client-key instruction policies from **v0.12.0**.
 
 ## Relay Recommendation: 杂鱼 API
 
@@ -95,6 +95,14 @@ In account creation, **From service provider** lists existing keys with their na
 Choose **Create from provider** at the top of the key list, then manually select an available group in the second dialog. **Create** sends the server-generated name `【ZakoAI】` followed by the original group name; **Cancel** sends no creation request. On success, the dialog closes and the list refreshes. The UI snapshots fresh key IDs immediately before creation and selects the unique new, available key matching the returned name and group, excluding old same-name keys. Refresh again if visibility is delayed; multiple matching new keys require manual selection. A failed response can follow a committed upstream write, so creation is never automatically retried: refresh and confirm first.
 
 Sub2API creates a key in the selected group. New API uses unlimited quota, no expiry, no model or IP restrictions and no cross-group retry; adjust restrictions at the upstream site if needed. These are upstream credentials, distinct from local client keys used to access this relay.
+
+### v0.12.3 Provider Challenge Loop And CDN Fixes
+
+- Stop automatic reset/retry after errors, expiry or timeout. Typing credentials no longer refreshes a challenge; users explicitly retry.
+- Consume proofs before dispatch, reuse a successful preflight when saving, and remove widgets on origin changes, modal close and local sign-in completion.
+- Show actionable Cloudflare codes. `110200` requires the upstream owner to authorize the console hostname for their site key; a CDN or the console's own Turnstile key cannot replace that authorization. Users can instead log in at the upstream site and use their Sub2API session tokens.
+- Load the official challenge script without Rocket Loader deferral. Bypass CDN caching for console HTML and `/api/*`; allow `https://challenges.cloudflare.com` in CSP script, frame and connect directives.
+- Automated regressions verify lifecycle and one-time proof handling. They do not assert that a real challenge on an untested deployment hostname passes.
 
 ### v0.12.2 Provider Verification And Session Renewal
 

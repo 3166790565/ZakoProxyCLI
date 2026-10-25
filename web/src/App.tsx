@@ -34,16 +34,7 @@ import { PromoBanner } from "./PromoBanner";
 import { Mascot } from "./Mascot";
 import { useUpdateCheck } from "./useUpdateCheck";
 import { version } from "../package.json";
-
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (element: HTMLElement, options: { sitekey: string; callback: (token: string) => void; "expired-callback": () => void; "error-callback": () => void }) => string;
-      reset: (widgetId?: string) => void;
-      remove?: (widgetId: string) => void;
-    };
-  }
-}
+import { loadProviderTurnstile } from "./providerTurnstile";
 
 const navigation = [
   { id: "dashboard", label: "仪表盘", icon: LayoutDashboard },
@@ -90,25 +81,24 @@ function Authentication({
   const turnstileWidget = useRef<string | null>(null);
   useEffect(() => {
     if (!initialized || !turnstileSiteKey || !turnstileRef.current) return;
-    const render = () => {
-      if (!window.turnstile || !turnstileRef.current || turnstileWidget.current) return;
-      turnstileWidget.current = window.turnstile.render(turnstileRef.current, {
+    let active = true;
+    let widget: string | null = null;
+    setTurnstileToken("");
+    void loadProviderTurnstile().then((turnstile) => {
+      if (!active || !turnstileRef.current) return;
+      widget = turnstile.render(turnstileRef.current, {
         sitekey: turnstileSiteKey,
-        callback: setTurnstileToken,
-        "expired-callback": () => setTurnstileToken(""),
-        "error-callback": () => setTurnstileToken(""),
+        callback: (token) => { if (active) setTurnstileToken(token); },
+        "expired-callback": () => { if (active) setTurnstileToken(""); },
+        "error-callback": () => { if (active) setTurnstileToken(""); },
       });
+      turnstileWidget.current = widget;
+    }).catch((failure: unknown) => { if (active) setError(errorMessage(failure)); });
+    return () => {
+      active = false;
+      if (widget && window.turnstile) window.turnstile.remove(widget);
+      if (turnstileWidget.current === widget) turnstileWidget.current = null;
     };
-    if (window.turnstile) render();
-    else {
-      const script = document.createElement("script");
-      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-      script.async = true;
-      script.defer = true;
-      script.addEventListener("load", render);
-      document.head.appendChild(script);
-      return () => script.removeEventListener("load", render);
-    }
   }, [initialized, turnstileSiteKey]);
   async function submit(event: FormEvent) {
     event.preventDefault();

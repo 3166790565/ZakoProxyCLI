@@ -3,6 +3,8 @@ import type { FormEvent, KeyboardEvent } from "react";
 import { AlertCircle, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDollarSign, CreditCard, ExternalLink, Eye, EyeOff, KeyRound, LoaderCircle, Pencil, Plus, RefreshCw, Server, ShieldCheck, Trash2, Wallet } from "lucide-react";
 import { api, errorMessage, time } from "./api";
 import type { ProviderAuthRequirements } from "./api";
+import { createProviderChallenge, loadProviderTurnstile } from "./providerTurnstile";
+import type { ChallengeState, ProviderChallenge } from "./providerTurnstile";
 import { Badge, Button, Confirm, Empty, ErrorBox, Field, IconButton, Modal, ModalForm, SearchInput } from "./components";
 import type { Notice } from "./components";
 import "./providers.css";
@@ -43,41 +45,6 @@ function payload(values: FormValues, id?: string) {
 function normalizedSite(value: string) {
   try { return new URL(value.trim()).toString().replace(/\/+$/, ""); }
   catch { return value.trim().replace(/\/+$/, ""); }
-}
-
-let providerTurnstileScript: Promise<void> | null = null;
-function loadProviderTurnstile() {
-  if (window.turnstile) return Promise.resolve();
-  if (providerTurnstileScript) return providerTurnstileScript;
-  providerTurnstileScript = new Promise<void>((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>("script[data-provider-turnstile], script[src*='challenges.cloudflare.com/turnstile/v0/api.js']");
-    const script = existing || document.createElement("script");
-    const cleanup = () => {
-      script.removeEventListener("load", loaded);
-      script.removeEventListener("error", failed);
-    };
-    const fail = (message: string) => {
-      cleanup();
-      script.remove();
-      providerTurnstileScript = null;
-      reject(new Error(message));
-    };
-    const loaded = () => {
-      if (window.turnstile) { cleanup(); resolve(); }
-      else fail("Cloudflare Turnstile 脚本未能启动，请重试");
-    };
-    const failed = () => fail("Cloudflare Turnstile 脚本加载失败，请检查网络后重试");
-    script.addEventListener("load", loaded, { once: true });
-    script.addEventListener("error", failed, { once: true });
-    if (!existing) {
-      script.dataset.providerTurnstile = "true";
-      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-      script.async = true;
-      script.defer = true;
-      document.head.appendChild(script);
-    }
-  });
-  return providerTurnstileScript;
 }
 
 function hasCredentials(provider: Provider) {
@@ -171,15 +138,14 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
   const [error, setError] = useState("");
   const [tested, setTested] = useState<(TestResult & { testedAt: number }) | null>(null);
-  const [turnstileToken, setTurnstileToken] = useState("");
+  const [challenge, setChallenge] = useState<ChallengeState | null>(null);
   const [requirements, setRequirements] = useState<{ key: string; status: "loading" | "loaded" | "error"; required?: boolean; siteKey?: string; error?: string } | null>(null);
   const [requirementsRetry, setRequirementsRetry] = useState(0);
   const [widgetLoading, setWidgetLoading] = useState(false);
   const [widgetError, setWidgetError] = useState("");
   const [widgetRetry, setWidgetRetry] = useState(0);
   const turnstileRef = useRef<HTMLDivElement>(null);
-  const turnstileWidget = useRef<string | null>(null);
-  const widgetGeneration = useRef(0);
+  const challengeRef = useRef<ProviderChallenge | null>(null);
   const turnstileLabelId = useId();
   const authRequirementsKey = (() => {
     if (values.kind !== "sub2api" || values.auth_mode !== "password") return "";
@@ -202,48 +168,45 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
   const requirementsLoading = Boolean(authRequirementsKey && (!currentRequirements || currentRequirements.status === "loading"));
   const turnstileRequired = Boolean(currentRequirements?.status === "loaded" && currentRequirements.required);
   const turnstileSiteKey = turnstileRequired ? currentRequirements?.siteKey || "" : "";
-  function resetChallenge() {
-    setTurnstileToken("");
-    if (turnstileWidget.current && window.turnstile) {
-      try { window.turnstile.reset(turnstileWidget.current); } catch { /* Widget may have been removed during a form transition. */ }
-    }
-  }
   const update = <K extends keyof FormValues>(key: K, value: FormValues[K]) => {
     setValues((current) => ({ ...current, [key]: value }));
     setError("");
-    if (["kind", "base_url", "auth_mode", "username", "password", "access_token", "refresh_token", "user_id", "token_type"].includes(key)) { setTested(null); resetChallenge(); }
+    if (["kind", "base_url", "auth_mode", "username", "password", "access_token", "refresh_token", "user_id", "token_type"].includes(key)) setTested(null);
   };
   useEffect(() => {
-    const generation = ++widgetGeneration.current;
+    let active = true;
+    let controller: ProviderChallenge | null = null;
     setWidgetError("");
+    setChallenge(null);
     setWidgetLoading(Boolean(turnstileSiteKey));
-    if (!turnstileSiteKey || !turnstileRef.current) {
-      if (turnstileWidget.current && window.turnstile && typeof window.turnstile.remove === "function") window.turnstile.remove(turnstileWidget.current);
-      turnstileWidget.current = null;
-      setTurnstileToken("");
-      return;
-    }
-    setTurnstileToken("");
-    void loadProviderTurnstile().then(() => {
-      if (generation !== widgetGeneration.current || !turnstileRef.current || !window.turnstile) return;
-      turnstileWidget.current = window.turnstile.render(turnstileRef.current, {
-        sitekey: turnstileSiteKey,
-        callback: (token) => { setTurnstileToken(token); setWidgetError(""); },
-        "expired-callback": () => { resetChallenge(); setWidgetError("验证已过期，请重新完成安全验证。"); },
-        "error-callback": () => { resetChallenge(); setWidgetError("验证遇到问题，请重新完成安全验证。"); },
+    if (turnstileSiteKey && turnstileRef.current) {
+      void loadProviderTurnstile().then((turnstile) => {
+        if (!active || !turnstileRef.current) return;
+        controller = createProviderChallenge(turnstile, turnstileRef.current, turnstileSiteKey, (state) => {
+          if (!active) return;
+          setChallenge(state);
+          setWidgetError(state.status === "error" || state.status === "expired" ? state.message : "");
+        });
+        challengeRef.current = controller;
+        setWidgetLoading(false);
+      }).catch((failure: unknown) => {
+        if (!active) return;
+        setWidgetLoading(false);
+        setWidgetError(errorMessage(failure));
       });
-      setWidgetLoading(false);
-    }).catch((failure: unknown) => {
-      if (generation !== widgetGeneration.current) return;
-      setWidgetLoading(false);
-      setWidgetError(errorMessage(failure));
-    });
+    }
     return () => {
-      widgetGeneration.current += 1;
-      if (turnstileWidget.current && window.turnstile && typeof window.turnstile.remove === "function") window.turnstile.remove(turnstileWidget.current);
-      turnstileWidget.current = null;
+      active = false;
+      controller?.dispose();
+      if (challengeRef.current === controller) challengeRef.current = null;
     };
-  }, [turnstileSiteKey, widgetRetry]);
+  }, [turnstileSiteKey, authRequirementsKey, widgetRetry]);
+  function loginPayload() {
+    if (!turnstileRequired) return payload(values, provider?.id);
+    const token = challengeRef.current?.consume();
+    if (!token) throw new Error("请先完成 Cloudflare 安全验证；如验证已使用或过期，请点击“重新验证”。");
+    return { ...payload(values, provider?.id), turnstile_token: token };
+  }
   const identityChanges = provider ? [
     normalizedSite(provider.base_url) !== normalizedSite(values.base_url) ? "站点地址" : "",
     provider.kind !== values.kind ? "平台" : "",
@@ -277,14 +240,13 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
     setError(""); setBusy("test"); setTested(null);
     try {
       validate(); validateRequirements();
-      if (turnstileRequired && !turnstileToken) throw new Error("请先完成 Cloudflare Turnstile 安全验证");
       const testedAt = Date.now();
-      const result = await api<TestResult>("/providers/test", "POST", { ...payload(values, provider?.id), ...(turnstileRequired ? { turnstile_token: turnstileToken } : {}) });
+      const result = await api<TestResult>("/providers/test", "POST", loginPayload());
       if (!result.ok) throw new Error("登录验证失败，请检查站点和凭据");
       setTested({ ...result, testedAt });
     }
     catch (failure) { setError(errorMessage(failure)); }
-    finally { if (turnstileRequired) resetChallenge(); setBusy(null); }
+    finally { setBusy(null); }
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError(""); setBusy("save");
@@ -296,13 +258,10 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
       if ((!provider || credentialsChanged) && !testedFresh) {
         if (tested) setTested(null);
         validateRequirements();
-        if (turnstileRequired && !turnstileToken) throw new Error(tested ? "登录验证已过期，请重新完成 Cloudflare Turnstile 安全验证后保存" : "请先完成 Cloudflare Turnstile 安全验证");
-        try {
-          const testedAt = Date.now();
-          const result = await api<TestResult>("/providers/test", "POST", { ...payload(values, provider?.id), ...(turnstileRequired ? { turnstile_token: turnstileToken } : {}) });
-          if (!result.ok) throw new Error("登录验证失败，请检查站点和凭据");
-          setTested({ ...result, testedAt });
-        } finally { if (turnstileRequired) resetChallenge(); }
+        const testedAt = Date.now();
+        const result = await api<TestResult>("/providers/test", "POST", loginPayload());
+        if (!result.ok) throw new Error("登录验证失败，请检查站点和凭据");
+        setTested({ ...result, testedAt });
       }
       const result = await api<Provider>(provider ? `/providers/${provider.id}` : "/providers", provider ? "PUT" : "POST", payload(values));
       saved = true;
@@ -310,7 +269,7 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
       catch (failure) { notify(`服务提供商已保存，同步暂未完成：${errorMessage(failure)}`, true); await onSaved(); onClose(); return; }
       await onSaved(); onClose(); notify(provider ? "服务提供商已更新" : "服务提供商登录成功，已添加");
     } catch (failure) { setError(saved ? `已保存，但列表更新失败：${errorMessage(failure)}` : errorMessage(failure)); }
-    finally { if (turnstileRequired && turnstileToken) resetChallenge(); setBusy(null); }
+    finally { setBusy(null); }
   }
   return <Modal title={provider ? "编辑服务提供商" : "添加服务提供商"} subtitle="连接站点，集中查看余额与使用情况" onClose={onClose} busy={Boolean(busy)} wide>
     <ModalForm onSubmit={submit} onClose={onClose} busy={Boolean(busy)} error={error} submit={provider ? "保存更改" : "登录并添加"}>
@@ -329,7 +288,18 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
       {authRequirementsKey && requirementsLoading && <div className="provider-turnstile-state" role="status"><LoaderCircle size={15} className="spin" />正在读取此站点的安全验证要求…</div>}
       {authRequirementsKey && currentRequirements?.status === "error" && <div className="provider-turnstile-state is-error" role="alert"><AlertCircle size={15} /><span>读取安全验证要求失败：{currentRequirements.error}</span><Button type="button" className="small-button" onClick={() => setRequirementsRetry((value) => value + 1)} disabled={Boolean(busy)}>重试</Button></div>}
       {turnstileRequired && !turnstileSiteKey && <div className="provider-turnstile-state is-error" role="alert"><AlertCircle size={15} /><span>此站点要求 Cloudflare Turnstile 验证，但未返回可用的站点密钥。</span></div>}
-      {turnstileRequired && Boolean(turnstileSiteKey) && <div className="provider-turnstile" role="group" aria-labelledby={turnstileLabelId}><p id={turnstileLabelId}>此 Sub2API 站点要求完成 Cloudflare 安全验证后才能登录。</p><div ref={turnstileRef} className="provider-turnstile-widget" />{widgetLoading && <span className="provider-turnstile-hint" role="status"><LoaderCircle size={14} className="spin" />正在加载安全验证…</span>}{widgetError && <span className="provider-turnstile-hint is-error" role="alert">{widgetError}<Button type="button" className="small-button" onClick={() => setWidgetRetry((value) => value + 1)} disabled={Boolean(busy)}>重新加载</Button></span>}{!widgetLoading && !widgetError && !turnstileToken && <span className="provider-turnstile-hint">请在上方完成验证。</span>}{turnstileToken && <span className="provider-turnstile-hint is-success" role="status"><CheckCircle2 size={14} />验证完成</span>}</div>}
+      {turnstileRequired && Boolean(turnstileSiteKey) && <div className="provider-turnstile" role="group" aria-labelledby={turnstileLabelId}>
+        <p id={turnstileLabelId}>请完成此服务提供商的安全验证。当前控制台域名：<strong>{window.location.hostname}</strong>。</p>
+        <div ref={turnstileRef} className="provider-turnstile-widget" />
+        {widgetLoading && <span className="provider-turnstile-hint" role="status"><LoaderCircle size={14} className="spin" />正在加载安全验证…</span>}
+        {widgetError && <span className="provider-turnstile-hint is-error" role="alert">{widgetError}</span>}
+        {!widgetLoading && !widgetError && challenge && <span className={`provider-turnstile-hint${challenge.status === "verified" ? " is-success" : ""}`} role="status">{challenge.status === "verified" && <CheckCircle2 size={14} />}{challenge.message}</span>}
+        <div className="provider-turnstile-actions">
+          <Button type="button" className="small-button" onClick={() => setWidgetRetry((value) => value + 1)} disabled={Boolean(busy) || widgetLoading}><RefreshCw size={13} />重新验证</Button>
+          <a className="provider-visit" href={values.base_url} target="_blank" rel="noopener noreferrer">在服务商站点登录<ExternalLink size={13} /></a>
+          <Button type="button" className="small-button" onClick={() => update("auth_mode", "token")} disabled={Boolean(busy)}>使用 Sub2API 令牌</Button>
+        </div>
+      </div>}
       {tested && <div className="provider-test-success" role="status"><CheckCircle2 size={18} /><div><strong>登录验证成功</strong><span>余额 {money(tested.balance)} · 今日消费 {money(tested.today_usage)}</span></div><Check size={16} /></div>}
     </ModalForm>
   </Modal>;

@@ -195,3 +195,6 @@
   .provider-list-toolbar input, .provider-list-toolbar select, .provider-form-grid input, .provider-secret input { font-size: 16px; }
   .provider-page-heading .button, .provider-toolbar-options .button, .provider-card-actions .icon-button, .provider-card-footer .button, .provider-visit, .provider-platform { touch-action: manipulation; }
 }
+
+.provider-turnstile-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.provider-turnstile > p, .provider-turnstile-hint { overflow-wrap: anywhere; }
