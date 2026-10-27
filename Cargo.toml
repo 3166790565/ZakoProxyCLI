@@ -1,6 +1,6 @@
 [package]
 name = "zakoai-proxy"
-version = "0.12.2"
+version = "0.13.0"
 edition = "2024"
 license = "MIT"
 default-run = "zakoai-proxy"
@@ -29,6 +29,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
+lopdf = { version = "0.38", default-features = false }
+roxmltree = "0.20"
 
 [dev-dependencies]
 tempfile = "3"

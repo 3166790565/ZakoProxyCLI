@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   Activity,
@@ -16,6 +16,7 @@ import {
   LoaderCircle,
   LogOut,
   Menu,
+  MessageSquareText,
   RefreshCw,
   Settings2,
   Server,
@@ -35,6 +36,8 @@ import { Mascot } from "./Mascot";
 import { useUpdateCheck } from "./useUpdateCheck";
 import { version } from "../package.json";
 
+const Playground = lazy(() => import("./Playground").then((module) => ({ default: module.Playground })));
+
 declare global {
   interface Window {
     turnstile?: {
@@ -46,12 +49,13 @@ declare global {
 }
 
 const navigation = [
-  { id: "dashboard", label: "仪表盘", icon: LayoutDashboard },
-  { id: "groups", label: "分组管理", icon: FolderClosed },
-  { id: "accounts", label: "账号管理", icon: Database },
+  { id: "playground", label: "游乐场", icon: MessageSquareText, section: "聊天" },
+  { id: "dashboard", label: "仪表盘", icon: LayoutDashboard, section: "数据和调用" },
   { id: "keys", label: "密钥管理", icon: KeyRound },
+  { id: "groups", label: "分组管理", icon: FolderClosed, section: "构建和管理" },
+  { id: "accounts", label: "账号管理", icon: Database },
   { id: "providers", label: "服务提供商", icon: Server },
-  { id: "logs", label: "调用日志", icon: FileClock },
+  { id: "logs", label: "调用日志", icon: FileClock, section: "系统设置" },
   { id: "settings", label: "系统设置", icon: Settings2 },
 ] as const;
 type Page = (typeof navigation)[number]["id"];
@@ -449,19 +453,20 @@ export default function App() {
           </span>
           <ChevronRight size={15} />
         </div>
-        <div className="nav-label">工作空间</div>
         <nav aria-label="主导航">
           {navigation.map((item) => (
-            <button
-              key={item.id}
-              className={`nav-item ${page === item.id ? "active" : ""}`}
-              onClick={() => void navigate(item.id)}
-              aria-current={page === item.id ? "page" : undefined}
-            >
-              <item.icon size={19} strokeWidth={1.7} />
-              <span>{item.label}</span>
-              {page === item.id && <span className="nav-indicator" />}
-            </button>
+            <Fragment key={item.id}>
+              {"section" in item && <div className="nav-label">{item.section}</div>}
+              <button
+                className={`nav-item ${page === item.id ? "active" : ""}`}
+                onClick={() => void navigate(item.id)}
+                aria-current={page === item.id ? "page" : undefined}
+              >
+                <item.icon size={19} strokeWidth={1.7} />
+                <span>{item.label}</span>
+                {page === item.id && <span className="nav-indicator" />}
+              </button>
+            </Fragment>
           ))}
         </nav>
         <div className="sidebar-bottom">
@@ -547,6 +552,7 @@ export default function App() {
           {page === "dashboard" && (
             <Dashboard revision={revision} notify={notify} onLoadingChange={reportPageLoading} />
           )}
+          {page === "playground" && !pageLoading && <Suspense fallback={<div className="full-loading"><LoaderCircle className="spin" size={23} />正在加载游乐场</div>}><Playground state={state} notify={notify} /></Suspense>}
           {page === "groups" && !pageLoading && <GroupsPage {...props} />}
           {page === "accounts" && !pageLoading && <AccountsPage {...props} />}
           {page === "keys" && !pageLoading && <KeysPage {...props} />}

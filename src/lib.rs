@@ -1,5 +1,6 @@
 pub mod api;
 pub mod network;
+pub mod playground;
 pub mod profiles;
 pub mod provider_keys;
 pub mod providers;
@@ -214,6 +215,11 @@ pub fn app(state: Shared) -> Router {
         .route("/api/logs/export", get(api::export_logs))
         .route("/api/profiles", get(api::profiles))
         .route("/api/models/discover", post(api::discover))
+        .route("/api/playground/models", get(playground::models))
+        .route("/api/playground/attachment", post(playground::attachment))
+        .route("/api/playground/search", post(playground::search))
+        .route("/api/playground", post(playground::chat))
+        .route("/api/playground/chat", post(playground::chat))
         .route("/v1/models", get(proxy::models))
         .route("/v1/responses", post(proxy::responses))
         .route("/v1/responses/compact", post(proxy::compact))

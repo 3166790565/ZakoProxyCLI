@@ -4,7 +4,7 @@
 
 A self-hosted Rust Responses / Chat Completions / Anthropic Messages API relay with a responsive desktop/mobile administration console, SQLite persistence, and Docker Compose deployment. The console includes a dashboard, groups, upstream accounts, client API keys, service providers, request logs, and system settings.
 
-Current release: **v0.12.2**, adding Sub2API Turnstile login and session renewal, with the official provider name, URL and platform fixed. Includes service-provider imports, upstream key creation and per-client-key instruction policies from **v0.12.0**.
+Current release: **v0.13.0**, adding a full-height chat playground with attachments and web search, improved navigation, actions below the composer, and searchable selectors. It retains the provider login and session fixes from **v0.12.2**.
 
 ## Relay Recommendation: 杂鱼 API
 
@@ -95,6 +95,12 @@ In account creation, **From service provider** lists existing keys with their na
 Choose **Create from provider** at the top of the key list, then manually select an available group in the second dialog. **Create** sends the server-generated name `【ZakoAI】` followed by the original group name; **Cancel** sends no creation request. On success, the dialog closes and the list refreshes. The UI snapshots fresh key IDs immediately before creation and selects the unique new, available key matching the returned name and group, excluding old same-name keys. Refresh again if visibility is delayed; multiple matching new keys require manual selection. A failed response can follow a committed upstream write, so creation is never automatically retried: refresh and confirm first.
 
 Sub2API creates a key in the selected group. New API uses unlimited quota, no expiry, no model or IP restrictions and no cross-group retry; adjust restrictions at the upstream site if needed. These are upstream credentials, distinct from local client keys used to access this relay.
+
+### v0.13.0 Chat Playground
+
+- A new Chat section opens the playground. Choose an enabled local key, its group and an available Chat Completions model; requests reuse the relay's routing, streaming and logs without exposing key material to the browser.
+- Attach UTF-8 text, Markdown, CSV, JSON, extractable PDF text or PNG/JPEG/WebP/GIF images. The server checks type and size before passing content to the selected upstream.
+- Optional web search retrieves up to five results from a fixed Bing RSS endpoint and supplies them as cited, untrusted reference context. The composer now sits directly below the conversation, and group, model and key selectors use searchable themed popovers. No database migration is needed.
 
 ### v0.12.2 Provider Verification And Session Renewal
 
