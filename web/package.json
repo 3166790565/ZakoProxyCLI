@@ -1,13 +1,12 @@
 {
   "name": "zako-relay-console",
   "private": true,
-  "version": "0.12.4",
+  "version": "0.12.2",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit --pretty false",
-    "test": "node --test tests/*.test.mjs"
+    "typecheck": "tsc --noEmit --pretty false"
   },
   "dependencies": {
     "@fontsource/nunito": "5.3.0",
