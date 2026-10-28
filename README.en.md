@@ -16,20 +16,26 @@ Current release: **v0.13.0**, adding a full-height chat playground with attachme
 
 ## Deploy With Docker Compose
 
-Requires Docker Engine/Desktop with Docker Compose v2. Build from the repository:
+Requires Docker Engine/Desktop with Docker Compose v2. Pull the published images:
 
 ```sh
-git clone https://github.com/mizaawa/ZakoProxyCLI.git
+git clone https://github.com/3166790565/ZakoProxyCLI.git
 cd ZakoProxyCLI
 docker compose pull
-docker compose build --pull
-docker compose up -d --no-build
+docker compose up -d
 docker compose ps
 ```
 
 Open **http://localhost:1990**. On a fresh data volume, create your administrator username and a password of at least 12 characters. There are no built-in administrator credentials. Subsequent visits use the same account. Initialize the account before making the service reachable by other people.
 
-The pull command downloads the published image; `build --pull` refreshes its Node/Rust/Debian base images and rebuilds the application from this checkout. `up -d` starts it. The Compose image name is `ghcr.io/mizaawa/zakoai-proxy-cli:latest`; successful default-branch CI runs also publish this image and a commit-SHA tag.
+`docker compose pull` downloads the published images and `up -d` starts them. This checkout's `compose.yaml` does not build locally: the proxy image is `bxacc123/zakoai-proxy-cli:latest` and the updater image is `bxacc123/zakoai-proxy-cli-updater:latest`. To build from modified sources yourself, target the stages explicitly:
+
+```sh
+docker build --target runtime -t bxacc123/zakoai-proxy-cli:latest .
+docker build --target updater -t bxacc123/zakoai-proxy-cli-updater:latest .
+```
+
+Alternatively use `docker buildx build --push` against your own registry and update the `image` fields in `compose.yaml`.
 
 Compose binds port **1990 to loopback by default**. Set `ZAKO_BIND_IP=0.0.0.0` only when you intend to expose the port. `ZAKO_PORT` changes the host port. Put these values in an uncommitted `.env`, for example:
 
@@ -66,14 +72,14 @@ Existing installations must first pull this source version and run the Compose b
 The official repository is now ZakoProxyCLI. The updater in v0.5.0 and earlier strictly matches the old Release URL, so console checks or updates may fail after the rename. Run the following once from the existing deployment directory to replace both proxy and updater. Keep the directory, Compose project name, and named volumes unchanged. Resolve local changes first if the pull cannot fast-forward.
 
 ```sh
-git remote set-url origin https://github.com/mizaawa/ZakoProxyCLI.git
+git remote set-url origin https://github.com/3166790565/ZakoProxyCLI.git
 git pull --ff-only origin main
-docker compose build --pull
-docker compose up -d --no-build
+docker compose pull
+docker compose up -d
 docker compose ps
 ```
 
-Images retain ghcr.io/mizaawa/zakoai-proxy-cli for existing deployments. v0.6.0 accepts both exact official Release URL paths; the old updater cannot automatically perform this initial migration.
+Images are published as `bxacc123/zakoai-proxy-cli` (proxy) and `bxacc123/zakoai-proxy-cli-updater` (updater). v0.6.0 accepts both exact official Release URL paths; the old updater cannot automatically perform this initial migration.
 
 ## Configure The Relay
 

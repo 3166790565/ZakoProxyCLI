@@ -2,11 +2,7 @@ name: zakoai-proxy
 
 services:
   proxy:
-    image: ghcr.io/mizaawa/zakoai-proxy-cli:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runtime
+    image: bxacc123/zakoai-proxy-cli:latest
     pull_policy: missing
     init: true
     restart: unless-stopped
@@ -44,10 +40,7 @@ services:
     stop_grace_period: 30s
 
   updater:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: updater
+    image: bxacc123/zakoai-proxy-cli-updater:latest
     init: true
     restart: unless-stopped
     environment:

@@ -8,8 +8,8 @@
 
 基于 Rust 的自托管 AI API 中转，为你的模型、账号和客户端密钥提供统一管理入口。
 
-[![Release](https://img.shields.io/github/v/release/mizaawa/ZakoProxyCLI?style=flat-square&color=e991ac)](https://github.com/mizaawa/ZakoProxyCLI/releases)
-[![CI](https://github.com/mizaawa/ZakoProxyCLI/actions/workflows/ci.yml/badge.svg)](https://github.com/mizaawa/ZakoProxyCLI/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/3166790565/ZakoProxyCLI?style=flat-square&color=e991ac)](https://github.com/3166790565/ZakoProxyCLI/releases)
+[![CI](https://github.com/3166790565/ZakoProxyCLI/actions/workflows/ci.yml/badge.svg)](https://github.com/3166790565/ZakoProxyCLI/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/Rust-1.99-dea584?style=flat-square&logo=rust)](Cargo.toml)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?style=flat-square&logo=docker&logoColor=white)](compose.yaml)
 [![License](https://img.shields.io/badge/License-MIT-8bbf9f?style=flat-square)](LICENSE)
@@ -73,7 +73,7 @@
 安装 **Docker Engine / Docker Desktop** 与 **Docker Compose v2**，然后获取源码：
 
 ```sh
-git clone https://github.com/mizaawa/ZakoProxyCLI.git
+git clone https://github.com/3166790565/ZakoProxyCLI.git
 cd ZakoProxyCLI
 cp .env.example .env
 ```
@@ -94,16 +94,24 @@ chmod 660 .env
 
 </details>
 
-### 2. 构建并启动
+### 2. 拉取镜像并启动
 
 ```sh
 docker compose pull
-docker compose build --pull
-docker compose up -d --no-build
+docker compose up -d
 docker compose ps
 ```
 
-发布镜像为 `ghcr.io/mizaawa/zakoai-proxy-cli:latest`。上述流程先拉取镜像，再从当前源码构建应用与更新器；`build --pull` 同时刷新基础镜像。默认分支 CI 成功后会发布 `latest` 及对应提交 SHA 标签。
+本仓库的 `compose.yaml` 直接使用已发布镜像，不再在本地构建：代理镜像为 `bxacc123/zakoai-proxy-cli:latest`，更新器镜像为 `bxacc123/zakoai-proxy-cli-updater:latest`。`docker compose pull` 会拉取这两个镜像，`up -d` 直接启动。
+
+如需自行修改源码后构建，可显式指定构建目标：
+
+```sh
+docker build --target runtime -t bxacc123/zakoai-proxy-cli:latest .
+docker build --target updater -t bxacc123/zakoai-proxy-cli-updater:latest .
+```
+
+或改用 `docker buildx build --push` 将构建结果推送到自己的镜像仓库，并同步修改 `compose.yaml` 中的 `image` 字段。
 
 ### 3. 初始化控制台
 
@@ -340,7 +348,7 @@ v0.3.0 起可在 **系统设置 → GitHub 源码更新** 中检查 GitHub 最�
 
 Compose 同时启动隔离的 `updater` 服务，不对宿主机发布端口。主程序通过内部 `UPDATER_URL=http://updater:9000/` 及只读 `/control/token` 访问它。Docker socket 仅挂载给更新器，不挂载给公开的代理服务。更新器持有近似宿主机 root 的 Docker 控制能力，请仅在受控服务器上部署，不要对外暴露内部接口或共享令牌。
 
-源码构建成功后，更新器先停止代理并备份完整数据，再启动新镜像；部署或健康检查失败时恢复旧版本及同一次数据备份。更新状态和备份保留在 `update-state` 数据卷中，不能代替异地备份。账号、API key、分组、统计和 `master.key` 随数据卷保留。更新只接受官方仓库的正式版本标签，不支持输入任意地址或执行命令。
+源码构建成功后，更新器先停止代理并备份完整数据，再启动新镜像；部署或健康检查失败时恢复旧版本及同一次数据备份。更新状态和备份保留在 `update-state` 数据卷中，不能代替异地备份。账号、API key、分组、统计和 `master.key` 随数据卷保留。更新只接受官方仓库的正式版本标签，不支持输入任意地址或执行命令。本仓库是上游 `mizaawa/ZakoProxyCLI` 的 fork，如需让网页更新指向自己的仓库，需同步修改 `src/update.rs` 中的 `REPOSITORY`、`RELEASE_API`、`IMAGE` 常量并自行发布 Release。
 
 旧版部署需先拉取本版本源码并执行一次上述 Compose 构建和启动命令，以安装更新器。使用自定义 Compose 项目名时，保持 `COMPOSE_PROJECT_NAME` 一致；不使用 Compose 或未配置更新器的本地开发环境只展示版本信息，不能在网页执行更新。更新代理镜像不会自行替换更新器或修改宿主机 Compose 文件；发布说明要求调整部署配置时仍需由管理员执行。
 
@@ -449,14 +457,14 @@ Turnstile 站点密钥和密钥统一保存在项目根目录 `.env`，系统设
 官方仓库已改名为 ZakoProxyCLI。v0.5.0 及更早版本的更新器严格匹配旧 Release URL，因此仓库改名后网页检查或更新可能失败。请在原部署目录执行一次以下操作，同时替换 proxy 和 updater；保持原目录、Compose 项目名和数据卷不变。若本地修改导致拉取失败，请先处理冲突。
 
 ```sh
-git remote set-url origin https://github.com/mizaawa/ZakoProxyCLI.git
+git remote set-url origin https://github.com/3166790565/ZakoProxyCLI.git
 git pull --ff-only origin main
-docker compose build --pull
-docker compose up -d --no-build
+docker compose pull
+docker compose up -d
 docker compose ps
 ```
 
-镜像仍发布至 ghcr.io/mizaawa/zakoai-proxy-cli，保持现有部署兼容。v0.6.0 识别新旧官方 Release URL；本次首次迁移不能依赖旧更新器自动完成。
+镜像发布至 `bxacc123/zakoai-proxy-cli`（代理）与 `bxacc123/zakoai-proxy-cli-updater`（更新器）。v0.6.0 识别新旧官方 Release URL；本次首次迁移不能依赖旧更新器自动完成。
 
 </details>
 
@@ -557,6 +565,6 @@ GLM / Grok 的六个轻量候选参考 [Baimuking/AI-Jailbreak](https://github.c
 
 **ZakoAI Proxy · 自托管，让你的 AI 接入更有条理。**
 
-[回到顶部](#zakoai-proxy) · [查看 Releases](https://github.com/mizaawa/ZakoProxyCLI/releases) · [提交 Issue](https://github.com/mizaawa/ZakoProxyCLI/issues)
+[回到顶部](#zakoai-proxy) · [查看 Releases](https://github.com/3166790565/ZakoProxyCLI/releases) · [提交 Issue](https://github.com/3166790565/ZakoProxyCLI/issues)
 
 </div>
